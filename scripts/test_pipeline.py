@@ -60,6 +60,49 @@ COPIED = [
     ".claude/skills/docs-reviewer/SKILL.md",
 ]
 
+# 픽스처의 실측은 **리포 자신의 실측과 별개 사실이다** — 어댑터에서 같은 판단을
+# 한 자리가 ADR-H038 결정 2 이고, 이쪽은 캘리브레이션이다.
+#
+# 템플릿의 `harness/calibration.json` 은 **영구히 미측정**이다(ADR-H039 결정 2 —
+# 남의 실측을 상속하지 않는다). 그래서 그것을 복사하면 픽스처는 `derived` 가 전부
+# null 인 리포가 되고, 타임아웃·테스트 수 하한을 소비하는 검사들이 *"값이 틀렸다"*
+# 가 아니라 *"값이 없다"* 로 깨진다 — **재지 않은 것을 잰 것처럼 쓰는 것을 막느라
+# 잰 것을 쓰는 테스트까지 막은 것**이다.
+#
+# 픽스처가 자기 실측을 선언한다. 아래 숫자는 Next.js 모양 리포에서 나올 법한
+# 값이고, **어느 실물의 측정도 아니다** — 이 검사들이 묻는 것은 값이 얼마인가가
+# 아니라 그 값이 소비자까지 도달하는가다.
+FIXTURE_CALIBRATION = {
+    "measured_at": "2026-01-01T00:00:00+0900",
+    "adapter": "nextjs-ts",
+    "adapter_verified": False,
+    "partial": False,
+    "stages": {
+        "compile": {"sec": 5.8, "ok": True, "exit_code": 0, "state": "measured"},
+        "lint": {"sec": 40.58, "ok": True, "exit_code": 0, "state": "measured"},
+        "check": {"sec": 8.06, "ok": True, "exit_code": 0, "state": "measured"},
+        "scoped": {"sec": 4.33, "ok": True, "exit_code": 0, "state": "measured"},
+        "full": {"sec": 35.36, "ok": True, "exit_code": 0, "state": "measured",
+                 "tests_ran": 1403, "suites": 47, "failures": 0},
+        "e2e": {"sec": None, "skipped": True, "state": "absent",
+                "reason": "cmd:null — 이 스택에 없는 스테이지"},
+        "build": {"sec": 20.66, "ok": True, "exit_code": 0, "state": "measured"},
+        "docs": {"sec": None, "skipped": True, "state": "absent",
+                 "reason": "cmd:null — 이 스택에 없는 스테이지"},
+    },
+    "retry": {"steps_recorded": 29, "steps_unrecorded": 20,
+              "steps_retried": 0, "max_attempts_observed": 1},
+    "report_glob_matched": True,
+    "infra": {},
+    "derived": {
+        "background_threshold_sec": 180,
+        "background_full_regression": False,
+        "full_timeout_sec": 300,
+        "tests_ran_floor": 1262,
+        "retry_budget": 2,
+    },
+}
+
 
 def _git(root, *args):
     return subprocess.run(["git"] + list(args), cwd=str(root),
@@ -83,6 +126,12 @@ def repo(tmp_path):
     cfg["adapter"] = "nextjs-ts"
     cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + chr(10),
                         encoding="utf-8")
+
+    # 캘리브레이션도 같다 — 실물은 영구히 미측정이고 픽스처는 잰 것이 있어야 한다.
+    # 위 FIXTURE_CALIBRATION 주석을 본다 (ADR-H039 결정 2).
+    (tmp_path / "harness" / "calibration.json").write_text(
+        json.dumps(FIXTURE_CALIBRATION, ensure_ascii=False, indent=2) + chr(10),
+        encoding="utf-8")
 
     (tmp_path / "src" / "lib").mkdir(parents=True)
     (tmp_path / "src" / "lib" / "match.ts").write_text(
@@ -3854,7 +3903,7 @@ class TestRuleKeyAxis:
     비켜 가는 방법이다 (`team-spec.md` 의 "finding_key 는 바꾸지 않는다").
 
     폴백이 안전장치다 — `rule_slug` 가 없으면 `rule_key == finding_key` 라
-    실물 원장 168줄의 집계가 한 비트도 안 바뀐다.
+    슬러그 없는 과거 줄의 집계가 한 비트도 안 바뀐다.
     """
 
     def test_슬러그가_없으면_rule_key_는_finding_key_다(self, repo):
@@ -3964,20 +4013,11 @@ class TestRuleKeyAxis:
         roll = {b["category"]: b for b in got["by_category"]}
         assert roll["DOC_CODE_DRIFT"]["distinct_keys"] == 2, roll
 
-    LEDGER_ROWS_BEFORE_C5 = 168
-
-    def test_실물_원장의_앞_168줄에는_슬러그가_없다(self, repo):
-        """C4 의 소급 무오염이 여기 선다 — 그 168줄 전부가 폴백 경로다.
-
-        **앞 168줄로 한정하는 것이 요점이다.** C4 시점의 문장(*"실물 원장에는
-        슬러그가 한 줄도 없다"*)을 그대로 두면 C5 이후 첫 런에서 빨간불이 되고,
-        그때 **회귀와 예정된 변화가 구분되지 않는다.** 원장은 append-only 라
-        앞 168줄은 영원히 참이고, 뒤에 붙는 줄은 아래가 따로 본다.
-        """
-        rows = [r for r in ldg.read_all(ROOT) if not r.get("_corrupt")]
-        assert len(rows) >= self.LEDGER_ROWS_BEFORE_C5, len(rows)
-        old = rows[:self.LEDGER_ROWS_BEFORE_C5]
-        assert not any("rule_slug" in r or "rule_key" in r for r in old)
+    # 파일럿 원장의 앞 168줄에 슬러그가 없다는 것을 못박던 검사가 여기 있었다.
+    # **추출이 그 168줄을 안 실었으므로 검사할 대상이 없다** (ADR-H039 결정 2).
+    # 폴백이 항등이라는 사실 자체는 위 `test_슬러그가_없으면_...` 이 픽스처 위에서
+    # 계속 든다 — 잃은 것은 *그 파일럿의 과거 데이터가 안 바뀌었다* 는 일회성
+    # 마이그레이션 잠금이고, 그것은 이미 끝난 일이다.
 
     def test_실물_원장의_슬러그는_전부_어휘_안이다(self, repo):
         """지금은 0건이라 자명히 통과하고 **P9 부터 진짜 불변식**이 된다.
@@ -4250,45 +4290,18 @@ class TestSlugVocabulary:
                                             "same_fact_two_places"}
 
 
-class TestC5RetroactiveCleanliness:
-    """**소급 무오염이 C5 의 통과 조건이다** — C3·C4 가 쓴 방법 그대로.
+class TestPromotionThresholds:
+    """임계 여섯을 상수로 못박는다 — 축을 넓혔다고 임계가 맞다는 뜻이 아니다.
 
-    과거 168줄에 슬러그를 소급 부여하지 않고 `rule_key` 폴백이 항등이므로,
-    실물 원장의 집계는 한 비트도 안 바뀐다. 그 사실을 고정 기대값으로
-    못박아 **기계가 지키게** 한다 — 산문으로만 적으면 다음 증분이 지운다.
+    **이 클래스에는 파일럿 원장의 집계를 고정 기대값으로 못박던 검사 둘이
+    있었다** (`by_category` 아홉 줄과 `distinct_runs == 6`). 추출이 그
+    168줄을 안 실었으므로 검사할 대상이 없다 (ADR-H039 결정 2).
+
+    **잃은 것과 남은 것을 가른다.** 잃은 것은 *그 파일럿의 과거 데이터가 한
+    비트도 안 바뀌었다* 는 **일회성 마이그레이션 잠금**이고 그 마이그레이션은
+    이미 끝났다. 남은 것은 집계 **동작**을 픽스처 위에서 재는 검사들
+    (`TestRuleKeyAxis` · `TestLedgerPromotion`)이고, 그쪽이 회귀를 든다.
     """
-
-    EXPECTED_BY_CATEGORY = {
-        "NAMING": (86, 84),
-        "DOC_CODE_DRIFT": (18, 18),
-        "TEST_MISSING_FAILURE_PATH": (18, 18),
-        "other/*": (16, 16),
-        "OTHER": (10, 10),
-        "CONTRACT_DEFECT": (5, 5),
-        "INPUT_VALIDATION": (2, 2),
-        "RESPONSE_SHAPE": (2, 2),
-        "TX_BOUNDARY": (1, 1),
-    }
-
-    def test_실물_집계가_C5_로_안_바뀐다(self, repo):
-        got = ldg.stage_promotions(ROOT)
-        assert got["candidates"] == [], got["candidates"]
-        assert got["held"] == [], got["held"]
-        assert got["distinct_runs"] == 6, got["distinct_runs"]
-        roll = {b["category"]: (b["count"], b["distinct_keys"])
-                for b in got["by_category"]}
-        assert roll == self.EXPECTED_BY_CATEGORY, roll
-
-    def test_판정_시한이_안_움직인다(self, repo):
-        """창은 「`rule_key` 값을 바꾸는 마지막 변경」에서 센다.
-
-        C5 는 P8 이 끝난 뒤이고 P9 전이므로 **창 밖**이다 — C4 가 못박은
-        P9~P11 이 그대로 최종 축 위의 3런이 된다.
-        """
-        got = ldg.stage_promotions(ROOT)["verdict_deadline"]
-        assert got["at"] == ldg.PROMOTION_VERDICT_AT_RUNS
-        assert got["seen"] == 6 and got["remaining"] == 3
-        assert got["due"] is False, got
 
     def test_임계_여섯은_한_자리도_안_바뀐다(self, repo):
         """축을 넓혔다고 임계가 맞다는 뜻이 아니다 — 캘리브레이션은 P9~P11 이다."""

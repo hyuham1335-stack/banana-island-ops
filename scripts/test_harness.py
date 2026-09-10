@@ -9,6 +9,7 @@ ROADMAP 1단계 게이트 G1: "일부러 깨뜨린 config를 doctor가 전부 �
 """
 
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -334,11 +335,12 @@ class TemplateHasNoPilotNamesTest(unittest.TestCase):
     #: 파일럿(Shelfie)과 그 스택의 고유명사. 소문자로 비교한다.
     NAMES = ("shelfie", "aladin", "anthropic", "supabase", "vercel")
 
-    #: 세션 F 가 다시 쓰는 자리. E 의 범위가 아니다 (ROADMAP 36 · F 행).
-    #: 이 파일 자신도 뺀다 — 위 NAMES 가 여기 적혀 있다. `CoreHasNoStackNamesTest`
-    #: 가 같은 이유로 자기를 제외하는 것과 같은 자리다.
-    SKIP_PREFIXES = ("docs/harness/", "CLAUDE.md", "harness/calibration.json",
-                     "harness/keep-paths.txt", "scripts/test_harness.py")
+    #: 이 파일 자신만 남는다 — 위 NAMES 가 여기 적혀 있기 때문이다.
+    #: `CoreHasNoStackNamesTest` 가 같은 이유로 자기를 제외하는 것과 같은 자리다.
+    #: 세션 F 가 넷(`docs/harness/`·`CLAUDE.md`·`calibration.json`·`keep-paths.txt`)
+    #: 을 지웠다 — 하나를 다시 쓸 때마다 제외에서 빼면 자물쇠가 그 자리를 맡는다
+    #: (ADR-H039).
+    SKIP_PREFIXES = ("scripts/test_harness.py",)
 
     def test_pilot_names_are_gone_from_the_template(self):
         hits = []
@@ -394,6 +396,52 @@ class CoreDoesNotImportTheExecutorTest(unittest.TestCase):
         self.assertEqual([], hits,
                          "코어가 순차 실행기를 물었다 — 공유 원시요소는 "
                          "scripts/runtime.py 가 든다 (ADR-H037)")
+
+
+class TemplateDocsAreNotDanglingTest(unittest.TestCase):
+    """가리키는 문서가 실재하는지 묻는다 — 매달린 참조는 조용히 통과한다.
+
+    추출은 `docs/` 직속 문서를 안 실었는데(ADR-H002 가 *"프로젝트가 채우는 자리"*
+    라 정했다) `CLAUDE.md` 의 문서 표와 `.claude/commands/log.md` 는 그것들을
+    읽으라고 가리켰다. **가리키는 쪽과 가리켜지는 쪽이 어긋나도 아무것도 안
+    깨진다** — 클론하는 사람이 없는 파일을 찾다 포기할 뿐이다.
+
+    `CoreHasNoStackNamesTest` 가 "있으면 안 되는 것"을 잡는다면 이쪽은 "없으면
+    안 되는 것"을 잡는다. 세션 F 가 걸었다 (ADR-H039).
+    """
+
+    #: 참조를 캐낼 파일들. 산문이 아니라 **경로를 지시로 쓰는** 자리만 본다.
+    SOURCES = ("CLAUDE.md", ".claude/commands/feature.md",
+               ".claude/commands/log.md")
+
+    #: `docs/…` 형태의 마크다운 경로. 백틱 안팎을 모두 잡되 확장자로 좁힌다.
+    PATTERN = re.compile(r"/?(docs/[A-Za-z0-9_\-./]+\.md)")
+
+    def _referenced(self):
+        found = {}
+        for src in self.SOURCES:
+            path = ROOT / src
+            if not path.exists():
+                continue
+            for match in self.PATTERN.finditer(path.read_text(encoding="utf-8")):
+                found.setdefault(match.group(1), src)
+        return found
+
+    def test_every_referenced_doc_exists(self):
+        missing = ["%s ← %s" % (rel, src)
+                   for rel, src in sorted(self._referenced().items())
+                   if not (ROOT / rel).exists()]
+        self.assertEqual([], missing,
+                         "가리키는 문서가 없다 — 골격을 만들거나 참조를 지운다 "
+                         "(ADR-H039)")
+
+    def test_the_check_actually_found_something(self):
+        """참조를 하나도 못 캐면 위 검사는 **아무것도 재지 않는다.**
+
+        정규식이 조용히 안 맞게 되는 것이 이 검사가 죽는 가장 흔한 길이고,
+        그때 초록불은 통과가 아니라 검사 부재다 (ADR-H007).
+        """
+        self.assertGreaterEqual(len(self._referenced()), 6)
 
 
 class SchemaValidatorTest(unittest.TestCase):

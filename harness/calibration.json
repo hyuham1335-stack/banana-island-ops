@@ -1,84 +1,72 @@
 {
-  "measured_at": "2026-09-08T09:51:37+0900",
-  "adapter": "nextjs-ts",
+  "_note": "아직 한 번도 재지 않았다. `python scripts/harness.py calibrate` 가 이 파일을 다시 쓴다. **여기 있는 숫자는 실측이 아니라 보수적 기본값이고**, 그 사실을 state 가 'unmeasured' 로 말한다 (ADR-H039).",
+  "measured_at": null,
+  "adapter": null,
   "adapter_verified": false,
   "partial": true,
   "stages": {
     "compile": {
-      "sec": 5.8,
-      "ok": true,
-      "exit_code": 0,
-      "state": "measured",
-      "measured_at": "2026-09-08T09:51:37+0900"
+      "sec": null,
+      "state": "unmeasured",
+      "skipped": true,
+      "reason": "아직 재지 않았다 — calibrate 가 채운다"
     },
     "lint": {
-      "sec": 40.58,
-      "ok": true,
-      "exit_code": 0,
-      "state": "measured",
-      "measured_at": "2026-09-08T09:51:37+0900"
+      "sec": null,
+      "state": "unmeasured",
+      "skipped": true,
+      "reason": "아직 재지 않았다 — calibrate 가 채운다"
     },
     "check": {
-      "sec": 8.06,
-      "ok": true,
-      "exit_code": 0,
-      "state": "measured",
-      "measured_at": "2026-09-08T09:51:37+0900"
+      "sec": null,
+      "state": "unmeasured",
+      "skipped": true,
+      "reason": "아직 재지 않았다 — calibrate 가 채운다"
     },
     "scoped": {
-      "sec": 4.33,
-      "ok": true,
-      "exit_code": 0,
-      "state": "stale",
-      "measured_at": "2026-09-02T14:09:59+0900",
+      "sec": null,
+      "state": "unmeasured",
       "skipped": true,
-      "stale_reason": "선택 대상 없음 — 계약이 있어야 측정된다. --select <test-name> 으로 수동 측정할 수 있다"
+      "reason": "아직 재지 않았다 — calibrate 가 채운다"
     },
     "full": {
-      "sec": 35.36,
-      "ok": true,
-      "exit_code": 0,
-      "tests_ran": 1403,
-      "suites": 47,
-      "failures": 0,
-      "state": "measured",
-      "measured_at": "2026-09-08T09:51:37+0900"
+      "sec": null,
+      "state": "unmeasured",
+      "skipped": true,
+      "reason": "아직 재지 않았다 — calibrate 가 채운다"
     },
     "e2e": {
       "sec": null,
+      "state": "unmeasured",
       "skipped": true,
-      "state": "absent",
-      "reason": "cmd:null — 이 스택에 없는 스테이지"
+      "reason": "아직 재지 않았다 — calibrate 가 채운다"
     },
     "build": {
-      "sec": 20.66,
-      "ok": true,
-      "exit_code": 0,
-      "state": "measured",
-      "measured_at": "2026-09-08T09:51:37+0900"
+      "sec": null,
+      "state": "unmeasured",
+      "skipped": true,
+      "reason": "아직 재지 않았다 — calibrate 가 채운다"
     },
     "docs": {
       "sec": null,
+      "state": "unmeasured",
       "skipped": true,
-      "state": "absent",
-      "reason": "cmd:null — 이 스택에 없는 스테이지"
+      "reason": "아직 재지 않았다 — calibrate 가 채운다"
     }
   },
   "retry": {
-    "steps_recorded": 29,
-    "steps_unrecorded": 20,
+    "steps_recorded": 0,
+    "steps_unrecorded": 0,
     "steps_retried": 0,
-    "max_attempts_observed": 1
+    "max_attempts_observed": 0
   },
-  "report_glob_matched": true,
-  "infra": {
-    "anthropic_key": false
-  },
+  "report_glob_matched": false,
+  "infra": {},
   "derived": {
     "background_threshold_sec": 180,
     "background_full_regression": false,
     "full_timeout_sec": 300,
-    "tests_ran_floor": 1262,
-    "retry_budget": 2
+    "tests_ran_floor": null,
+    "retry_budget": null
   }
 }
