@@ -417,3 +417,39 @@ class TestCostState:
     def test_세션_아이디가_없으면_빈_dict_다(self, transcripts):
         assert rt.read_cost_state(
             None, transcript_root=transcripts) == {}
+
+
+# ---------------------------------------------------------------------------
+# 타임존 — 파일럿의 KST 를 템플릿이 물려받지 않는다 (ADR-H038)
+# ---------------------------------------------------------------------------
+
+class TestTimezone:
+    """`TZ` 는 선언이지 상수가 아니다.
+
+    ADR-H037 이 *"옮기기만 하고 매개변수화하지 않는다 — 세션 E 로 넘긴다"* 고
+    적어 둔 자리다. 하드코딩된 +09:00 은 이 리포를 만든 사람의 시간대이지
+    클론하는 사람의 것이 아니고, 시각이 기록의 축이라 조용히 틀리면 원장·영수증·
+    보고서가 전부 남의 시간으로 남는다.
+    """
+
+    def test_환경변수가_없으면_시스템_로컬이다(self, monkeypatch):
+        monkeypatch.delenv("HARNESS_TZ", raising=False)
+        from datetime import datetime
+        assert rt.resolve_tz() == datetime.now().astimezone().tzinfo
+
+    def test_환경변수가_오프셋을_정한다(self, monkeypatch):
+        from datetime import datetime, timedelta
+        monkeypatch.setenv("HARNESS_TZ", "-05:00")
+        assert rt.resolve_tz().utcoffset(datetime.now()) == timedelta(hours=-5)
+
+    def test_읽을_수_없는_값은_조용히_넘기지_않는다(self, monkeypatch):
+        """형식이 틀리면 로컬로 폴백하되 **왜 그랬는지**를 남긴다.
+
+        여기서 죽이지 않는 이유는 시각이 게이트가 아니기 때문이고, 조용히
+        넘기지 않는 이유는 ADR-H007 과 같다 — 모르는 것은 모른다고 적는다.
+        """
+        monkeypatch.setenv("HARNESS_TZ", "다섯시")
+        with pytest.warns(RuntimeWarning, match="HARNESS_TZ"):
+            resolved = rt.resolve_tz()
+        from datetime import datetime
+        assert resolved == datetime.now().astimezone().tzinfo

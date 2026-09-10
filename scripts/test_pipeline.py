@@ -1196,7 +1196,11 @@ class TestPhaseParser:
     def test_resolves_the_three_namespaces(self, repo, phases, request_file):
         paths, s = st.create_run(repo, "demo", request_file)
         ctx = cli.build_context(repo, paths, s)
-        assert cli.resolve("${config.project.name}", ctx) == "shelfie"
+        # 기대값을 리터럴로 박지 않는다 — 이 검사가 묻는 것은 이름이 무엇인가가
+        # 아니라 `config` 네임스페이스가 실물 설정까지 도달하는가다.
+        expected = json.loads(
+            (repo / "harness/config.json").read_text(encoding="utf-8"))["project"]["name"]
+        assert cli.resolve("${config.project.name}", ctx) == expected
         assert cli.resolve("${run.dir}/x.md", ctx).endswith("x.md")
 
         # 기대값을 리터럴로 박지 않는다 — 이 칸은 `calibrate` 가 다시 잴 때마다

@@ -309,6 +309,51 @@ class CoreHasNoStackNamesTest(unittest.TestCase):
                          "스택 이름 목록이 실행기 코드로 돌아왔다 — 선언은 어댑터가 든다 (ADR-H031)")
 
 
+class TemplateHasNoPilotNamesTest(unittest.TestCase):
+    """추출 게이트의 자물쇠 — 파일럿(Shelfie)의 고유명사가 템플릿에 남으면 안 된다.
+
+    `CoreHasNoStackNamesTest`(위)와 잡는 것이 다르다. 그쪽은 **스택 실행기 이름
+    목록**이 코어 코드로 돌아오는 것을 막고, 이쪽은 **파일럿 프로젝트의 고유명사**가
+    템플릿에 남는 것을 막는다. 클론하는 사람이 남의 앱 이름을 물려받으면 그것을
+    지우는 일이 첫 작업이 된다.
+
+    **단어 목록에 `npm`·`next` 를 넣지 않는다.** 그 둘은 러너 화이트리스트
+    (`adapters/adapter.schema.json`)와 `script_manifest` 설명에 **정당하게** 있다.
+    잡을 수 없는 것에 자물쇠를 걸면 다음 사람이 자물쇠를 지운다 (ADR-H038).
+    """
+
+    #: 파일럿(Shelfie)과 그 스택의 고유명사. 소문자로 비교한다.
+    NAMES = ("shelfie", "aladin", "anthropic", "supabase", "vercel")
+
+    #: 세션 F 가 다시 쓰는 자리. E 의 범위가 아니다 (ROADMAP 36 · F 행).
+    #: 이 파일 자신도 뺀다 — 위 NAMES 가 여기 적혀 있다. `CoreHasNoStackNamesTest`
+    #: 가 같은 이유로 자기를 제외하는 것과 같은 자리다.
+    SKIP_PREFIXES = ("docs/harness/", "CLAUDE.md", "harness/calibration.json",
+                     "harness/keep-paths.txt", "scripts/test_harness.py")
+
+    def test_pilot_names_are_gone_from_the_template(self):
+        hits = []
+        for path in sorted(ROOT.rglob("*")):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(ROOT).as_posix()
+            if rel.startswith((".git/", "__pycache__/", ".pytest_cache/")):
+                continue
+            if "/__pycache__/" in rel or rel.startswith(self.SKIP_PREFIXES):
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                continue
+            lowered = text.lower()
+            for name in self.NAMES:
+                if name in lowered:
+                    hits.append("%s: %s" % (rel, name))
+        self.assertEqual([], hits,
+                         "파일럿의 고유명사가 템플릿에 남았다 — 세션 E 의 스크럽 "
+                         "게이트다 (ADR-H038)")
+
+
 class CoreDoesNotImportTheExecutorTest(unittest.TestCase):
     """추출 게이트의 자물쇠 — 8페이즈 코어가 순차 실행기를 다시 물면 안 된다.
 
@@ -416,7 +461,7 @@ class GlobTest(unittest.TestCase):
 
 class InitTest(DoctorTestBase):
     def test_refuses_to_overwrite_existing_config(self):
-        self.assertEqual(2, harness.run_init(self.root, adapter="nextjs-ts", name="shelfie"))
+        self.assertEqual(2, harness.run_init(self.root, adapter="nextjs-ts", name="demo"))
 
     def test_creates_config_from_profile_seed(self):
         target = self.root / "harness/config.json"
