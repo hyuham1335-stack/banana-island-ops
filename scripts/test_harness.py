@@ -411,7 +411,7 @@ class TemplateDocsAreNotDanglingTest(unittest.TestCase):
     """
 
     #: 참조를 캐낼 파일들. 산문이 아니라 **경로를 지시로 쓰는** 자리만 본다.
-    SOURCES = ("CLAUDE.md", ".claude/commands/feature.md",
+    SOURCES = ("README.md", "CLAUDE.md", ".claude/commands/feature.md",
                ".claude/commands/log.md")
 
     #: `docs/…` 형태의 마크다운 경로. 백틱 안팎을 모두 잡되 확장자로 좁힌다.
