@@ -83,11 +83,33 @@ flowchart LR
 
 ### 2. 설정 파일을 만듭니다
 
-준비된 시드를 복사해 `harness/config.json` 을 만듭니다.
+하네스의 설정은 `harness/config.json` 하나입니다. 이걸 맨손으로 쓰지 않아도 되도록
+**미리 채워 둔 예시 파일**이 `harness/profiles/<어댑터 이름>/config.json` 에 들어 있습니다.
+아래 명령이 그 파일을 복사하면서 `{{name}}` 자리에 프로젝트 이름만 넣어
+`harness/config.json` 으로 저장합니다. 하는 일은 그게 전부이고, git 설정이나 커밋 이력은
+건드리지 않습니다. 이미 `harness/config.json` 이 있으면 `--force` 없이는 덮어쓰지 않습니다.
 
 ```
 python scripts/harness.py init --adapter nextjs-ts --name my-project
 ```
+
+예시 파일을 미리 두는 이유는, 설정 항목 중 **기술 스택이 정해지면 답도 정해지는 것**이
+많기 때문입니다. Next.js 프로젝트라면 소스가 `src/` 아래 있고 테스트 파일은 `*.test.ts` 니까,
+누가 어느 폴더를 맡을지도 자동으로 정해집니다. 아래가 `nextjs-ts` 예시에 이미 들어 있는
+것들입니다.
+
+| 항목 | 채워져 있는 값 |
+|---|---|
+| 담당자와 각자의 폴더 | 구현 담당은 `src/app/**` `src/components/**` `src/lib/**` 등, 테스트 담당은 `src/**/*.test.ts` |
+| 계약 문서의 절 제목 | `## 유닛` `## 진입점` `## 오류 어휘` 등. 여기 적힌 글자와 `harness/templates/contract.md` 가 정확히 같아야 합니다 |
+| 브랜치 규칙 | 기준 브랜치는 `main`, 작업 브랜치는 `feat-` 로 시작, `main` 은 직접 밀지 못하게 보호 |
+| 한 런에서 쓸 수 있는 예산 | 파일 10개 · 400줄 · 모델 호출 24회까지 |
+| 아무도 건드리면 안 되는 폴더 | `harness/**` `docs/**` `scripts/**` `.claude/**` 등 |
+
+**지금 예시 파일은 `nextjs-ts` 하나뿐입니다.** 다른 스택으로 시작한다면 이 명령 대신
+`harness/profiles/nextjs-ts/config.json` 을 `harness/config.json` 으로 직접 복사한 뒤,
+위 표의 항목들을 자기 프로젝트에 맞게 고치면 됩니다. 어디가 틀렸는지는 다음 단계의
+`doctor` 가 알려 줍니다.
 
 ### 3. `doctor` 를 통과시킵니다
 
@@ -171,7 +193,7 @@ flowchart TD
 | `config.schema.json` | 위 파일의 형식 정의입니다. 검사기는 표준 라이브러리로 직접 만들었고, `_` 로 시작하는 키는 주석으로 보고 건너뜁니다 |
 | `adapters/*.json` | 스택별 명령 모음입니다. `self-python`(이 저장소 자신) · `nextjs-ts` · `_template`(새로 만들 때 복사하는 빈 틀) |
 | `adapters/adapter.schema.json` | 어댑터의 형식 정의입니다. **실행을 허용하는 명령어 목록이 여기 들어 있습니다** — 실행기 코드에 두지 않습니다 |
-| `profiles/<어댑터>/config.json` | `harness.py init` 이 복사해 가는 설정 시드입니다. 프로젝트 이름만 바꿔 넣습니다 |
+| `profiles/<어댑터>/config.json` | 미리 채워 둔 설정 예시 파일입니다. `harness.py init` 이 이걸 복사하면서 프로젝트 이름만 바꿔 넣습니다 |
 | `phases/01~08.md` | 각 단계의 정의입니다. 문서 맨 위에 JSON 이 들어 있고, 그 단계가 무엇을 요구하고(`requires`) 무엇을 내야 하고(`produces`) 몇 번까지 다시 시도하는지(`loop`)가 적혀 있습니다 |
 | `templates/contract.md` | 계약 문서의 빈 틀입니다. 절 제목은 `config.json` 에 적힌 것과 글자까지 같아야 하고, 다르면 `doctor` 가 미리 막습니다 |
 | `calibration.json` | `calibrate` 가 남기는 실측값과 거기서 나온 정책입니다. **"아직 안 재봤다" 와 "0초" 를 같은 칸에 쓰지 않습니다** |
@@ -238,7 +260,7 @@ flowchart TD
 
 | 명령 | 하는 일 |
 |---|---|
-| `init --adapter <이름> --name <프로젝트>` | 시드를 복사해 `harness/config.json` 을 만듭니다. 이미 있으면 `--force` 없이는 덮어쓰지 않습니다 |
+| `init --adapter <이름> --name <프로젝트>` | `harness/profiles/<이름>/config.json` 을 복사해 `harness/config.json` 을 만듭니다. 이미 있으면 `--force` 없이는 덮어쓰지 않습니다 |
 | `doctor` | 설정과 저장소가 어긋난 곳을 찾아 사람이 읽는 보고서로 냅니다 |
 | `calibrate [--stage <이름>] [--replace]` | 검사를 한 번씩 돌려 걸린 시간을 기록합니다. 하나라도 실패하면 **파일을 쓰지 않습니다** — 코드가 깨진 상태에서 잰 값은 기준이 될 수 없기 때문입니다 |
 
