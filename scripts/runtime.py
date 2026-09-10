@@ -22,14 +22,43 @@ stdlib `trace` 를 가리지 않으려고 `trace_contract.py` 를 쓴 것과 같
 
 import hashlib
 import json
+import os
+import re
 import sys
-from datetime import timezone, timedelta
+import warnings
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
 
-# 이 리포의 타임존. **여기서 매개변수화하지 않는다** — 옮기면서 동시에 고치면
-# 회귀가 났을 때 어느 쪽이 원인인지 못 가른다 (ADR-H037).
-TZ = timezone(timedelta(hours=9))
+def resolve_tz():
+    """기록에 찍을 타임존을 정한다 — `HARNESS_TZ`, 없으면 시스템 로컬.
+
+    **템플릿에 만든 사람의 시간대를 하드코딩하지 않는다** (ADR-H038). 시각은
+    원장·영수증·보고서의 축이라, 조용히 틀리면 클론한 사람의 기록이 전부 남의
+    시간으로 남는다. ADR-H037 이 *"옮기기만 하고 매개변수화는 세션 E 로 넘긴다"*
+    고 적어 둔 자리가 여기다.
+
+    형식은 `+09:00`·`-05:00` 같은 UTC 오프셋이다. 읽을 수 없으면 로컬로 가되
+    **경고를 남긴다** — 모르는 것을 모른다고 적는 것이 이 리포의 규율이다
+    (ADR-H007).
+    """
+    raw = os.environ.get("HARNESS_TZ", "").strip()
+    if not raw:
+        return datetime.now().astimezone().tzinfo
+    match = re.fullmatch(r"([+-])(\d{2}):?(\d{2})", raw)
+    if not match:
+        warnings.warn("HARNESS_TZ %r 를 UTC 오프셋으로 읽을 수 없다 — "
+                      "시스템 로컬 시간대로 간다 (형식: +09:00)" % raw,
+                      RuntimeWarning, stacklevel=2)
+        return datetime.now().astimezone().tzinfo
+    sign, hours, minutes = match.groups()
+    delta = timedelta(hours=int(hours), minutes=int(minutes))
+    return timezone(-delta if sign == "-" else delta)
+
+
+#: import 시점에 한 번 정한다. 한 프로세스 안에서 시각의 축이 흔들리면
+#: 같은 런의 두 기록이 다른 시간대로 남는다.
+TZ = resolve_tz()
 
 
 

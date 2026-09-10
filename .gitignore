@@ -1,8 +1,5 @@
-node_modules/
-.next/
-out/
-next-env.d.ts
-tsconfig.tsbuildinfo
+# 스택 산출물은 프로젝트가 자기 것을 적는다 (예: node_modules/ · target/ · __pycache__/).
+# 아래 항목은 스택과 무관하게 하네스 자신이 요구하는 것들이다.
 
 # phase execution outputs
 phases/**/phase*-output.json

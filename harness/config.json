@@ -2,7 +2,7 @@
   "schema": 1,
 
   "project": {
-    "name": "shelfie",
+    "name": "harness-template",
     "language": "ko",
     "instruction_file": "CLAUDE.md",
     "instruction_slot_budget": 12,
@@ -10,7 +10,7 @@
     "secret_files": [".env.local", ".env"]
   },
 
-  "adapter": "nextjs-ts",
+  "adapter": "self-python",
 
   "contract": {
     "path_template": "_workspace/contract_{slug}.md",
@@ -74,10 +74,10 @@
   "_reviewers_note": "when glob 이 변경 파일에 걸리면 그 리뷰어가 켜진다. 우선순위는 배열 순서다. skill 은 .claude/skills/{skill}/SKILL.md 를 가리키고, doctor 와 lint-phases 가 기동 전에 실재를 확인한다. roles[].agent 와 겹치면 거부한다 — 작성자가 자기 코드를 리뷰한 것은 독립 관측이 아니다.",
   "reviewers": [
     {"code": "data", "skill": "data-layer-reviewer", "priority": 1,
-     "when": ["src/lib/schemas.ts", "src/services/**"]},
+     "when": ["src/lib/schemas.*", "src/services/**"]},
     {"code": "sec", "skill": "security-reviewer", "priority": 2,
-     "when": ["src/app/api/**", "src/lib/env.ts", "src/lib/proof.ts",
-              ".env*", "next.config.*"]},
+     "when": ["src/app/api/**", "src/lib/env.*", "src/lib/auth.*",
+              ".env*", "*.config.*"]},
     {"code": "arch", "skill": "architecture-reviewer", "priority": 3,
      "when": ["src/app/**", "src/components/**", "src/lib/**",
               "src/services/**", "src/types/**"]},

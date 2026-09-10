@@ -20,7 +20,7 @@
 
 테스트가 모킹할 대상. 시그니처와 반환 형태를 적는다.
 
-- `AladinClient.search(title: string) -> AladinBook | null`
+- `SearchClient.search(query: string) -> SearchResult | null`
 
 ## 데이터 형태
 

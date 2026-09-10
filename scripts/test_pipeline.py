@@ -74,6 +74,16 @@ def repo(tmp_path):
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.write_text((ROOT / rel).read_text(encoding="utf-8"), encoding="utf-8")
 
+    # 픽스처는 **Next.js 모양의 리포**다 (아래 src/lib/match.ts · src/services/**).
+    # 이 리포 자신은 파이썬이라 실물 config 의 adapter 가 self-python 이고, 둘은
+    # 다른 사실이다. 실물을 복사하는 값(스키마·역할·리뷰어 라우팅이 실물과 같이
+    # 움직인다)은 지키되 어댑터만 픽스처의 스택으로 되돌린다 (ADR-H038).
+    cfg_path = tmp_path / "harness/config.json"
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    cfg["adapter"] = "nextjs-ts"
+    cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + chr(10),
+                        encoding="utf-8")
+
     (tmp_path / "src" / "lib").mkdir(parents=True)
     (tmp_path / "src" / "lib" / "match.ts").write_text(
         "export function matchTitle(a: string, b: string): number { return 0 }\n",
@@ -5145,9 +5155,9 @@ class TestPrecheckScope:
 def _probe_policy(repo, name, value):
     """실물 어댑터의 프로브 정책을 바꾼다.
 
-    실물 `anthropic_key` 는 M44 이후 `on_missing: warn` 이다(목업으로 떨어지는
-    경로가 있다). **exit 10 기전 자체를 보는 테스트는 그 정책에 기대면 안 된다**
-    — 기전과 이 리포의 정책은 다른 사실이다.
+예시 어댑터의 `api_key` 는 `on_missing: warn` 이다(키가 없으면 목업으로
+    떨어지는 경로를 가정한 값이다). **exit 10 기전 자체를 보는 테스트는 그 정책에
+    기대면 안 된다** — 기전과 어댑터의 정책은 다른 사실이다.
     """
     ap = repo / "harness" / "adapters" / "nextjs-ts.json"
     d = harness._read_json(ap)
@@ -5208,19 +5218,19 @@ class TestPrecheckInfra:
     """인프라 실패는 정책 실패와 다르다 — **카운터를 소모하지 않는다** (§E9)."""
 
     def test_env_probe_fires_only_when_the_path_is_touched(self, repo, monkeypatch):
-        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("EXAMPLE_API_KEY", raising=False)
         _branch(repo, "feat-x")
         _bulk_change(repo, 1)           # services/ 를 안 건드렸다
         got = pc.run(repo, scope="pr")
         assert got["exit"] == 0
 
     def test_env_probe_failure_is_exit_10(self, repo, monkeypatch):
-        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("EXAMPLE_API_KEY", raising=False)
         _branch(repo, "feat-x")
         p = repo / "src" / "services"
         p.mkdir(parents=True)
-        (p / "anthropic.ts").write_text("export const a = 1\n", encoding="utf-8")
-        _probe_policy(repo, "anthropic_key", "fail")
+        (p / "api-client.ts").write_text("export const a = 1\n", encoding="utf-8")
+        _probe_policy(repo, "api_key", "fail")
         got = pc.run(repo, scope="pr")
         assert got["exit"] == 10
         assert got["classification"] == "infra"
@@ -5229,14 +5239,14 @@ class TestPrecheckInfra:
     def _touch_services(self, repo):
         p = repo / "src" / "services"
         p.mkdir(parents=True, exist_ok=True)
-        (p / "anthropic.ts").write_text("export const a = 1" + "\n",
+        (p / "api-client.ts").write_text("export const a = 1" + "\n",
                                         encoding="utf-8")
 
     def _on_missing(self, repo, value, why="목업으로 떨어진다"):
         ap = repo / "harness" / "adapters" / "nextjs-ts.json"
         d = harness._read_json(ap)
         for probe in d["infra_preflight"]:
-            if probe["name"] == "anthropic_key":
+            if probe["name"] == "api_key":
                 if value is None:
                     probe.pop("on_missing", None)
                     probe.pop("why", None)
@@ -5249,7 +5259,7 @@ class TestPrecheckInfra:
 
     def test_on_missing_warn_은_exit_10_을_내지_않는다(self, repo, monkeypatch):
         """M44 — P4 를 죽인 기전. 키가 없어도 목업이 돌면 회귀가 안 깨진다."""
-        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("EXAMPLE_API_KEY", raising=False)
         _branch(repo, "feat-x")
         self._touch_services(repo)
         self._on_missing(repo, "warn")
@@ -5258,18 +5268,18 @@ class TestPrecheckInfra:
 
     def test_면제는_통과가_아니라_gap_이다(self, repo, monkeypatch):
         """면제가 조용하면 그것은 면제가 아니라 구멍이다."""
-        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("EXAMPLE_API_KEY", raising=False)
         _branch(repo, "feat-x")
         self._touch_services(repo)
         self._on_missing(repo, "warn")
         got = pc.run(repo, scope="pr")
-        assert got["gaps"] == ["infra_skipped:anthropic_key"], got
+        assert got["gaps"] == ["infra_skipped:api_key"], got
         waived = [c for c in got["checks"] if c.get("waived")]
         assert len(waived) == 1, got["checks"]
         assert "목업으로 떨어진다" in waived[0]["message"], waived[0]
 
     def test_기본값은_여전히_fail_이다(self, repo, monkeypatch):
-        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("EXAMPLE_API_KEY", raising=False)
         _branch(repo, "feat-x")
         self._touch_services(repo)
         self._on_missing(repo, None)
@@ -5294,23 +5304,23 @@ class TestPrecheckInfra:
         assert _fails(_lint(repo), "infra_preflight") == []
 
     def test_present_env_probe_passes(self, repo, monkeypatch):
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-테스트")
+        monkeypatch.setenv("EXAMPLE_API_KEY", "sk-테스트")
         _branch(repo, "feat-x")
         p = repo / "src" / "services"
         p.mkdir(parents=True)
-        (p / "anthropic.ts").write_text("export const a = 1\n", encoding="utf-8")
-        _probe_policy(repo, "anthropic_key", "fail")
+        (p / "api-client.ts").write_text("export const a = 1\n", encoding="utf-8")
+        _probe_policy(repo, "api_key", "fail")
         got = pc.run(repo, scope="pr")
         assert got["exit"] == 0
 
     def test_secret_value_never_appears_in_the_report(self, repo, monkeypatch):
         """precheck 결과는 원장·보고서로 간다. 값이 실리면 리포로 샌다."""
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-비밀값-12345")
+        monkeypatch.setenv("EXAMPLE_API_KEY", "sk-비밀값-12345")
         _branch(repo, "feat-x")
         p = repo / "src" / "services"
         p.mkdir(parents=True)
-        (p / "anthropic.ts").write_text("export const a = 1\n", encoding="utf-8")
-        _probe_policy(repo, "anthropic_key", "fail")
+        (p / "api-client.ts").write_text("export const a = 1\n", encoding="utf-8")
+        _probe_policy(repo, "api_key", "fail")
         got = pc.run(repo, scope="pr")
         assert "sk-비밀값-12345" not in json.dumps(got, ensure_ascii=False)
 
@@ -6961,12 +6971,12 @@ class TestPrecheckSpecAlignment:
 
     def test_인프라_실패가_상태를_실제로_잠근다(self, repo, request_file,
                                               monkeypatch):
-        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("EXAMPLE_API_KEY", raising=False)
         _branch(repo, "feat-x")
         p = repo / "src" / "services"
         p.mkdir(parents=True)
-        (p / "anthropic.ts").write_text("export const a = 1\n", encoding="utf-8")
-        _probe_policy(repo, "anthropic_key", "fail")
+        (p / "api-client.ts").write_text("export const a = 1\n", encoding="utf-8")
+        _probe_policy(repo, "api_key", "fail")
         cli.run_init(repo, "x", request_file)
         env = cli.run_precheck(repo, scope="pr")
         assert env["exit"] == 10
@@ -7020,15 +7030,15 @@ def _secrets(repo, **kv):
 class TestMask:
 
     def test_비밀_파일의_값만_가리고_키_이름은_남긴다(self, repo):
-        _secrets(repo, ANTHROPIC_API_KEY="sk-ant-실제값-99")
-        got = mask_mod.mask_text(repo, "설정: ANTHROPIC_API_KEY=sk-ant-실제값-99 끝")
-        assert "sk-ant-실제값-99" not in got["text"]
-        assert "ANTHROPIC_API_KEY" in got["text"]
+        _secrets(repo, EXAMPLE_API_KEY="sk-예시-실제값-99")
+        got = mask_mod.mask_text(repo, "설정: EXAMPLE_API_KEY=sk-예시-실제값-99 끝")
+        assert "sk-예시-실제값-99" not in got["text"]
+        assert "EXAMPLE_API_KEY" in got["text"]
         assert "[MASKED]" in got["text"]
 
     def test_값이_다른_문맥에_나와도_가린다(self, repo):
         """PR 본문에는 KEY=VALUE 형태가 아니라 로그 조각으로 실릴 수 있다."""
-        _secrets(repo, ALADIN_TTB_KEY="ttbkey12345")
+        _secrets(repo, EXAMPLE_TTB_KEY="ttbkey12345")
         got = mask_mod.mask_text(repo, "요청 실패: ...&ttbkey=ttbkey12345&q=1")
         assert "ttbkey12345" not in got["text"]
 

@@ -25,7 +25,7 @@
     "check": {
       "cmd": ["audit", "--audit-level=high"],
       "timeout_sec": 180,
-      "_note": "이 스택에는 마이그레이션이 없다(ADR-003 무상태). check 자리는 CLAUDE.md·TRD 6.5 가 배포 차단 게이트로 정한 의존성 취약점 검사가 쓴다."
+      "_note": "check 자리는 프로젝트가 배포 차단 게이트로 정한 검사가 쓴다. 이 예시에서는 의존성 취약점 검사다."
     },
     "scoped": {
       "cmd": ["run", "test", "--"],
@@ -70,12 +70,12 @@
   "migration": null,
 
   "infra_preflight": [
-    {"name": "anthropic_key", "kind": "env", "var": "ANTHROPIC_API_KEY", "required_when_touched": ["src/services/anthropic.ts"],
+    {"name": "api_key", "kind": "env", "var": "EXAMPLE_API_KEY", "required_when_touched": ["src/services/api-client.ts"],
      "on_missing": "warn",
-     "why": "키가 없으면 src/services/anthropic.ts:268·:321 이 목업을 돌려주고 그 목업도 zod 스키마를 통과한다. 골든 테스트는 스스로 skip 한다(ADR-010). 즉 키 부재는 회귀 실패를 뜻하지 않는다 — 다만 골든 경로를 안 태웠으므로 통과가 아니라 infra_skipped gap 이다."}
+     "why": "예시다. 키가 없을 때 그 코드가 목업으로 떨어지고 그 목업도 스키마를 통과한다면, 키 부재는 회귀 실패를 뜻하지 않는다 — 다만 실제 경로를 안 태웠으므로 통과가 아니라 infra_skipped gap 이다. on_missing 을 fail 로 둘지 warn 으로 둘지는 그 사실이 정한다."}
   ],
 
-  "_infra_preflight_note": "aladin_key 프로브를 또다 (2026-09-07). 원래 {name: aladin_key, var: ALADIN_TTB_KEY, required_when_touched: [src/services/aladin.ts]} 가 있었다. **알라딘 OpenAPI 가 종료된다** — 신규 인증키 발급이 2026-09-04 에 닫혔고 서비스는 2026-10-30 에 끝난다. 그 키를 발급받을 방법이 없으므로 **이 조건은 영원히 만족될 수 없고**, 남겨 두면 src/services/aladin.ts 를 건드리는 모든 런이 05 precheck 에서 영구히 멈춘다. 런 P4(20260907-1326-f749)가 실물로 그 자리를 밟았다. **anthropic_key 는 남긴다** — 그 키는 지금도 발급받을 수 있어 조건이 성립한다. 그리고 **프로브 설계의 결함(M44)은 닫혔다** — 이 리포의 services/ 는 키가 없으면 목업을 돌려주고(anthropic.ts:268·:321) 그 목업도 스키마를 통과하며 골든 테스트는 스스로 skip 하므로(shelf.golden.test.ts:169, ADR-010), 키 부재가 반드시 회귀 실패를 뜻하지 않는다. 그래서 on_missing: warn 을 달았다 — exit 10 대신 infra_skipped:anthropic_key gap 이고 등급이 PASS_WITH_GAPS 로 내려간다. **면제는 통과가 아니다**(§E9, ADR-H027).",
+  "_infra_preflight_note": "프로브는 **조건이 성립할 수 있을 때만** 둔다. 발급받을 방법이 없는 키를 요구하는 프로브는 영원히 만족될 수 없고, 그 파일을 건드리는 모든 런이 05 precheck 에서 영구히 멈춘다. 그리고 on_missing 은 실측이 정한다 — 키가 없을 때 코드가 목업으로 떨어지고 그 목업도 스키마를 통과한다면 키 부재가 반드시 회귀 실패를 뜻하지는 않으므로 warn 이 맞고, exit 10 대신 infra_skipped:<name> gap 과 PASS_WITH_GAPS 로 내려간다. **면제는 통과가 아니다** (ADR-H027).",
 
   "infra_failure_patterns": [
     "ECONNREFUSED",

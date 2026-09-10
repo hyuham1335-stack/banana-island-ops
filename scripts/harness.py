@@ -2,7 +2,7 @@
 """Harness 계약 계층 CLI — init · doctor · calibrate.
 
 하네스는 프로젝트의 언어를 쓰지 않는다. python stdlib 만으로 돌아가므로
-node_modules·빌드 산출물이 깨진 상태에서도 게이트가 동작한다.
+의존성·빌드 산출물이 깨진 상태에서도 게이트가 동작한다.
 
 Usage:
     python scripts/harness.py doctor
@@ -884,7 +884,7 @@ RETRY_BUDGET_FLOOR = 2
 
 
 def _subprocess_runner(stage, cmd, cwd, timeout_sec):
-    """기본 러너. 테스트는 이것을 쓰지 않는다 — 실제 npm 을 돌리지 않기 위해."""
+    """기본 러너. 테스트는 이것을 쓰지 않는다 — 실제 빌드 도구를 돌리지 않기 위해."""
     started = time.monotonic()
     try:
         result = subprocess.run(cmd, cwd=str(cwd), capture_output=True,
@@ -901,9 +901,9 @@ def _subprocess_runner(stage, cmd, cwd, timeout_sec):
 def _resolve_bin(root, name):
     """러너 바이너리를 실행 가능한 경로로 해석한다.
 
-    Windows 에서 npm 은 npm.cmd 이고, subprocess 는 shell 없이 bare name 으로
-    이것을 띄우지 못한다(WinError 2). shell=True 로 푸는 것은 러너 화이트리스트가
-    막으려는 임의 명령 실행 벡터를 되살리는 일이라 쓰지 않는다.
+    Windows 에서 러너 바이너리는 흔히 `.cmd` 래퍼이고, subprocess 는 shell 없이
+    bare name 으로 이것을 띄우지 못한다(WinError 2). shell=True 로 푸는 것은 러너
+    화이트리스트가 막으려는 임의 명령 실행 벡터를 되살리는 일이라 쓰지 않는다.
     """
     resolved = shutil.which(name)
     if resolved:

@@ -53,7 +53,7 @@ FIXTURE_SOURCES = [
     "src/components/upload/Picker.tsx",
     "src/lib/match.ts",
     "src/lib/match.test.ts",
-    "src/services/aladin.ts",
+    "src/services/api-client.ts",
     "src/types/book.ts",
 ]
 
@@ -68,6 +68,15 @@ def _build_fixture(root: Path):
         dst = root / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / rel, dst)
+    # 픽스처는 **Next.js 모양의 리포**다 (package.json · src/app/** · vitest).
+    # 이 리포 자신은 파이썬이라 config 의 adapter 가 self-python 이고, 둘은 다른
+    # 사실이다. 실물 config 를 복사하는 값(스키마·역할·계약 절이 실물과 같이
+    # 움직인다)은 지키되 어댑터만 픽스처의 스택으로 되돌린다 (ADR-H038).
+    cfg_path = root / "harness/config.json"
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    cfg["adapter"] = "nextjs-ts"
+    cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + chr(10),
+                        encoding="utf-8")
     _write(root / "package.json", json.dumps(FIXTURE_PACKAGE_JSON, indent=2) + "\n")
     _write(root / "CLAUDE.md", "# fixture\n")
     for rel in FIXTURE_SOURCES:
@@ -784,14 +793,14 @@ class CalibrateTest(DoctorTestBase):
     def test_env_probe_records_presence_not_value(self):
         import os
 
-        os.environ["ANTHROPIC_API_KEY"] = "sk-secret-value-do-not-leak"
+        os.environ["EXAMPLE_API_KEY"] = "sk-secret-value-do-not-leak"
         try:
             harness.run_calibrate(self.root, runner=self.fake_runner())
         finally:
-            del os.environ["ANTHROPIC_API_KEY"]
+            del os.environ["EXAMPLE_API_KEY"]
         raw = (self.root / "harness/calibration.json").read_text(encoding="utf-8")
         self.assertNotIn("sk-secret-value-do-not-leak", raw)
-        self.assertIs(True, self.load()["infra"]["anthropic_key"])
+        self.assertIs(True, self.load()["infra"]["api_key"])
 
     # --- doctor 연동 ---
 
