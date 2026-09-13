@@ -26,3 +26,12 @@ _workspace/
 # python 바이트코드
 __pycache__/
 .pytest_cache/
+
+# Next.js · npm 산출물 (스택 고유 — 위 주석대로 프로젝트가 적는다)
+/node_modules
+/.next/
+/out/
+/coverage
+*.tsbuildinfo
+next-env.d.ts
+.vercel
