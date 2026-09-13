@@ -1,4 +1,4 @@
-# 프로젝트: {이름} — {한 줄 설명}
+# 프로젝트: banana-island-ops — 바나나아일랜드 다국어 콘텐츠·광고 성과·3국 원가손익 운영 도구
 
 ## 작업 원칙
 
@@ -23,7 +23,7 @@
 
 작업 전 아래 문서를 읽고 프로젝트의 기획·기술·설계 의도를 파악할 것. 세부 내용은 이 파일에 중복해서 적지 않고 각 문서에서 관리한다.
 
-**아래 일곱은 빈 골격이다. 하네스를 돌리기 전에 채운다** — 문서가 하네스 설정의 **입력**이기 때문이고, 무엇이 무엇의 입력인지는 `docs/harness/ROADMAP.md` §4 의 표에 있다.
+**아래 일곱은 2026-09-13 에 채워졌다.** 문서가 하네스 설정의 **입력**이기 때문에 코드보다 먼저 채웠고, 무엇이 무엇의 입력인지는 `docs/harness/ROADMAP.md` §4 의 표에 있다. 원본 자료(사업계획서·목업·Miro ERD·메모)와 어긋나면 문서를 먼저 고친다.
 
 | 문서 | 다루는 내용 |
 |------|------------|
@@ -43,9 +43,9 @@
      근거 문서를 함께 가리킨다. 여기 적은 스택이 `harness/config.json` 의
      `adapter` 선택과 맞아야 하고, 어긋나면 `doctor` 가 exit 2 로 막는다. -->
 
-- 애플리케이션: **{스택}**. 서버 로직을 어디에 쓰는지까지 적는다. 버전·선택 근거는 `/docs/TRD.md`
-- 배포: **{대상}**. 비밀값을 어떻게 주입하는지와 **실행 시간 상한**을 적는다 — 상한은 설계 제약이라 시간 예산으로 다룬다
-- 데이터: **{저장소 또는 「지금은 저장소 없음」}**. 없다면 언제 도입하는지 조건을 `/docs/ADR.md` 에 적고 여기서 가리킨다
+- 애플리케이션: **Next.js(App Router) + TypeScript(strict)**. 서버 로직은 `src/app/api/**` 의 Route Handler 가 받아 `src/services/**` 가 처리한다. 페이지(서버 컴포넌트)는 **읽기만** 서비스에서 직접 하고, 쓰기는 전부 `/api` 를 거친다. 버전·선택 근거는 `/docs/TRD.md` §2
+- 배포: **Vercel Hobby**. 비밀값은 Vercel 환경변수로 주입하고(로컬은 `.env.local`), 코드에서는 `src/lib/env.ts` 로만 읽는다. **함수 실행 상한 300초(Fluid compute, Hobby 는 고정)**. LLM 라우트는 그보다 낮게 `maxDuration` 30초(제목)·60초(본문)로 예산화하고, Anthropic 호출 타임아웃은 20초·45초다 — 상한은 설계 제약이라 시간 예산으로 다룬다(`/docs/TRD.md` §9)
+- 데이터: **Neon Postgres + Drizzle ORM(HTTP 드라이버)**. 스키마는 `src/lib/db/schema.ts`, 마이그레이션은 `drizzle/`. 테이블 17개의 원본은 Miro ERD v7 이고 영문 매핑은 `/docs/TRD.md` §4
 
 ## 아키텍처 규칙
 
@@ -59,7 +59,13 @@
 - CRITICAL: 디렉토리 구조와 레이어 경계는 `/docs/ARCHITECTURE.md`를 따를 것
 - CRITICAL: 아키텍처 구조·흐름을 문서에 표현할 때는 항상 Mermaid로 작성할 것. ASCII 아트 트리나 화살표 나열은 금지한다
 - CRITICAL: API 계약은 `/docs/API_SPEC.md`를 단일 출처로 삼고, 계약 변경 시 해당 문서를 먼저 갱신할 것
-- {프로젝트 고유 규칙을 여기 더한다 — 외부 응답의 스키마 검증, 신뢰 경계, 출처 구분, 실패와 데이터 없음의 구분 등}
+- CRITICAL: 외부에서 온 응답(LLM 의 JSON 출력 · Google Sheets 행 · 환율 API · 발행 URL HEAD)은 `src/lib/schemas.ts` 의 zod 스키마를 통과한 뒤에만 쓴다. 통과 못 한 응답은 로그에 원문을 남기고 `API_SPEC.md` 의 실패 코드로 응답한다
+- CRITICAL: 금액은 **발생 통화 그대로** 저장하고(`amount` + `currency`), 원화 환산은 조회 시 `fx_rates` 를 날짜로 조인해 계산한다. 환산값을 저장하는 컬럼을 만들지 않는다 (ADR-005)
+- CRITICAL: 콘텐츠·발행 계획의 상태 전이는 `src/services/content-workflow.ts` 한 곳에서만 일어난다. 라우트·컴포넌트가 상태 문자열을 직접 쓰거나 비교하지 않는다. 계획 상태는 저장하지 않고 콘텐츠 상태에서 파생한다 (ADR-007)
+- CRITICAL: LLM 이 만든 본문을 저장할 때는 **전송 프롬프트 원문 · 적용 규칙 스냅샷(규칙 id·버전 + 예시 id) · 검출된 금칙어**를 항상 같은 행에 함께 저장한다. 프롬프트만, 본문만 저장하는 경로는 없다
+- 실패(외부 호출이 안 됨)와 결과 없음(데이터가 없음)은 다른 응답이다. 결과 없음은 200 + 빈 배열/`null`, 실패는 `API_SPEC.md` 에러 어휘의 코드다. 화면도 두 상태를 다른 문구로 보여준다
+- 대표(`admin`) 전용 동작(승인·반려·브랜드 예시 등록·원가·광고 데이터 조회)은 역할 쿠키를 **서버에서** 검사한다. 화면에서 버튼을 숨기는 것은 인가가 아니다
+- 신규 의존성 추가 금지 목록(ADR 없이는): 상태 관리 라이브러리 · CSS 프레임워크 · 두 번째 LLM 프로바이더 · 인증 SaaS
 - UI 작업은 `/docs/UI_GUIDE.md`의 규칙과 안티패턴 목록을 따를 것
 
 ## 개발 프로세스
@@ -74,13 +80,17 @@
      실제로 이 어긋남을 잡은 적이 있다 (ADR-H003). -->
 
 ```
-{개발 서버}
-{타입 검사}
-{린트}
-{테스트}
-{프로덕션 빌드}
-{의존성 취약점 게이트}
+npm run dev                      # 개발 서버 (http://localhost:3000)
+npm run typecheck                # tsc --noEmit
+npm run lint                     # eslint
+npm run test                     # vitest run (junit 리포터 → reports/junit/)
+npm run build                    # next build
+npm audit --audit-level=high     # 의존성 취약점 게이트 (어댑터 check 스테이지)
+npx drizzle-kit generate         # 스키마 변경 → drizzle/ 마이그레이션 생성
+npx drizzle-kit migrate          # 마이그레이션 적용 (배포 전 로컬에서)
 ```
+
+어댑터는 `harness/adapters/nextjs-ts.json` 이다. 위 스크립트 이름(`typecheck` · `lint` · `test` · `build`)은 그 어댑터가 `package.json` 에서 찾는 이름이므로 바꾸지 않는다.
 
 하네스 자신의 명령은 스택과 무관하다:
 

@@ -333,7 +333,10 @@ class TemplateHasNoPilotNamesTest(unittest.TestCase):
     """
 
     #: 파일럿(Shelfie)과 그 스택의 고유명사. 소문자로 비교한다.
-    NAMES = ("shelfie", "aladin", "anthropic", "supabase", "vercel")
+    #: `anthropic`·`vercel` 은 뺐다 — 이 프로젝트(banana-island-ops)가 그 둘을
+    #: 실제 스택으로 정해 `docs/`·`CLAUDE.md` 에 정당하게 적기 때문이다
+    #: (docs/ADR.md ADR-001 · ADR-003, 2026-09-13). 파일럿 앱·서점·DB 이름은 남긴다.
+    NAMES = ("shelfie", "aladin", "supabase")
 
     #: 이 파일 자신만 남는다 — 위 NAMES 가 여기 적혀 있기 때문이다.
     #: `CoreHasNoStackNamesTest` 가 같은 이유로 자기를 제외하는 것과 같은 자리다.
