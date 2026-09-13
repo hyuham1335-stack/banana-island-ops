@@ -63,7 +63,7 @@ flowchart LR
 ### 1. 클론한 뒤 문서부터 채웁니다
 
 `CLAUDE.md` 의 빈칸과 `docs/` 아래 7개 문서(`PRD` · `TRD` · `API_SPEC` · `ARCHITECTURE` ·
-`ADR` · `UI_GUIDE` · `PIPELINE-LOG`)는 빈 골격으로 배포됩니다.
+`ADR` · `UI_GUIDE`)는 빈 골격으로 배포됩니다.
 **이 문서들이 하네스 설정의 입력이라서, 순서를 바꾸면 설정에서 채울 수 없는 칸이 생깁니다.**
 
 | 하네스가 알아야 하는 것 | 어느 문서에서 가져오나 |
@@ -214,7 +214,6 @@ flowchart TD
 | `pipeline/report.py` | 08 입니다. 표는 실행기가 조립하고 설명은 모델이 씁니다 |
 | `pipeline/verdict.py` | 산출물이 조건을 맞췄는지 판정합니다. 요청이 동결됐는지, 요청 항목을 빠짐없이 덮었는지, 계획이 범위를 벗어나지 않았는지, 리뷰가 수렴했는지를 봅니다 |
 | `runtime.py` | 시각, 대화 기록 읽기, 출력 인코딩처럼 여러 곳이 함께 쓰는 도구입니다 |
-| `session_log.py` | 세션 종료 훅이 부르는 기록기입니다. **해석 없이 사실만 남깁니다.** 실패해도 세션을 막지 않고, 실패했다는 사실을 기록에 남깁니다 |
 | `test_harness.py` · `test_pipeline.py` · `test_runtime.py` | 하네스 자신의 테스트입니다 |
 | `fixtures/gate/` | 스테이지 결과를 재현하는 데 쓰는 샘플 데이터입니다 |
 
@@ -223,11 +222,10 @@ flowchart TD
 | 경로 | 무엇 |
 |---|---|
 | `commands/feature.md` | `/feature` 명령입니다. `doctor` 로 열고, 사용자의 요청을 한 글자도 바꾸지 않고 동결한 다음, 종료 코드에 따라 다음 행동을 정합니다 |
-| `commands/log.md` | `/log` 명령입니다. 세션 기록의 사실을 `docs/PIPELINE-LOG.md` 에 한 줄로 옮깁니다. 기록에 없는 것은 적지 않습니다 |
 | `agents/impl-writer.md` · `agents/test-writer.md` | 03 이 **병렬로** 부르는 구현 담당과 테스트 담당입니다. 각자 자기 경로만 건드립니다 |
 | `agents/plan-reviewer.md` | 01·02 가 부르는 검토자입니다. 계획을 직접 고치지 않고 지적만 냅니다 — 02 에서는 외부 플랜 리뷰 도구가 없을 때의 폴백입니다 |
 | `skills/{data-layer,security,architecture,test-quality,docs}-reviewer/SKILL.md` | 05 의 리뷰어 5종입니다(데이터·보안·구조·테스트 품질·문서). 변경된 파일이 각자의 담당 범위에 걸리면 켜집니다. 문서 리뷰어만 소스 변경이 0인 런에서 켜집니다 |
-| `settings.json` | 훅 2개입니다 — 세션 종료 시 기록, 위험한 셸 명령 차단 |
+| `settings.json` | 훅 1개입니다 — 위험한 셸 명령 차단 |
 
 ### `docs/`
 

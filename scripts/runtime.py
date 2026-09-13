@@ -126,7 +126,7 @@ def read_cost_state(session_id: Optional[str], *,
     `session_` 을 붙여 **구조적으로** 겹치지 않게 했다 — `_record_run` 의
     `entry.update` 가 둘을 겹쳐 쓰면 뒤엣것이 조용히 이긴다. 그 함수에
     배선하지도 않는다. `_session_id` 를 `_extract_usage` 에서 갈라 둔 것과
-    같은 이유다. 런 단위 합계 이름으로 옮기는 것은 `cli.run_cost` 가 한다.
+    같은 이유다. 런 단위 합계로 옮기는 것은 이 함수의 일이 아니다.
 
     **서브에이전트를 포함한다** — 43개 트랜스크립트로 갈랐다.
     서브에이전트가 0개인 세션 다섯에서 메인 트랜스크립트만으로
@@ -142,8 +142,8 @@ def read_cost_state(session_id: Optional[str], *,
     6건이고, 누적값은 같고 `totalDuration` 만 다르다.
 
     레코드는 트랜스크립트의 **마지막 줄**로 써진다 — 그 세션 자신의
-    `SessionEnd` 훅은 이 값을 볼 수 없다. 그래서 런 비용은 훅이 아니라
-    **읽는 시점**에 집계한다 (`cli.run_cost`).
+    `SessionEnd` 훅은 이 값을 볼 수 없다. 그래서 세션 비용은 훅이 아니라
+    **읽는 시점**에 집계해야 한다.
 
     못 재면 키를 만들지 않는다 (ADR-H007). `hasUnknownModelCost` 면
     `cost_usd` 대신 그 플래그를 적는다 — 값을 모르는 모델이 섞인 합계는
