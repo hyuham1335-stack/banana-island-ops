@@ -114,7 +114,22 @@ ImportSummary { id, createdAt, totalRows, okRows, failedRows, trigger: 'manual'|
 
 ### POST `/api/plans/sync`
 
-요청 본문 없음 → 200 `{ data: SyncResult }` · `SyncResult { importId, totalRows, upserted, held, failed, errors: {row:number, reason:string}[] }`.
+요청 본문 없음 → 200 `{ data: SyncResult }`.
+
+```
+SyncResult { importId, totalRows, upserted, held, failed, errors: SheetRowIssue[] }
+SheetRowIssue { row: number, column?: 'A'|'B'|'C'|'D'|'E'|'F'|'G'|'H', reason: SheetRowError }
+SheetRowError = 'MISSING_REQUIRED' | 'INVALID_DATE' | 'UNKNOWN_CHANNEL' | 'UNKNOWN_PRODUCT'
+              | 'UNKNOWN_LANG' | 'UNKNOWN_POST_TYPE' | 'DUPLICATE_KEY'
+
+SheetPlanRow {                 // zod SheetPlanRowSchema — 시트 한 행의 형태 (TRD §4 「시트 행 계약」)
+  planId: string(≥1), scheduledDate: 'YYYY-MM-DD', channel: string, product: string,
+  lang: Lang, postType: '건강정보형'|'활동소식형'|'비교큐레이션형'|'후기리뷰형',
+  topic: string, owner: string
+}
+```
+
+`row` 는 시트 행 번호(헤더 = 1). 건너뛴 행은 `failed` 에 세고 나머지 행은 정상 반영된다 — 행 단위 실패는 동기화 실패가 아니다. 전부 빈 행은 `totalRows` 에서 빠진다. `SheetRowError` 는 닫힌 집합이고 응답 봉투의 `ErrorCode` 와 다른 어휘다(행 단위 사유이지 HTTP 실패가 아니다).
 시트를 못 읽으면 502 `SHEET_FETCH_FAILED` (기존 계획은 그대로). 시트가 비어 있으면 200 + `totalRows: 0`(모든 기존 행 `held`).
 
 ### POST `/api/contents/titles`

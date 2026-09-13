@@ -43,7 +43,7 @@
 
 | FR | 기술 명세 | 위치 |
 |---|---|---|
-| FR-001 | `syncPlansFromSheet(sheets: SheetsClient, trigger)` — `SHEET_RANGE` 를 읽어 행을 `SheetPlanRow` zod 로 검증 → `sheet_row_key` 기준 `INSERT … ON CONFLICT DO UPDATE` → 이번 읽기에 없는 기존 키는 `on_hold=true` → `import_logs` 1행(전체/성공/실패/오류 상세 jsonb). 검증 실패 행은 건너뛰고 오류 상세에 남긴다. 담당자는 `users.name` 정확 일치, 실패 시 NULL | `services/plan-sync.ts`, `lib/sheets.ts` |
+| FR-001 | `syncPlansFromSheet(sheets: SheetsClient, trigger)` — `SHEET_RANGE` 를 읽어 행을 `SheetPlanRow` zod 로 검증(§4 「시트 행 계약」) → `sheet_row_key` 기준 `INSERT … ON CONFLICT DO UPDATE` → 이번 읽기에 없는 기존 키는 `on_hold=true` → `import_logs` 1행(전체/성공/실패/오류 상세 jsonb). 검증 실패 행과 채널·제품·언어·글유형 불일치 행은 건너뛰고 `SheetRowError` 로 오류 상세에 남긴다. 담당자는 `users.name` 정확 일치, 실패 시 NULL | `services/plan-sync.ts`, `lib/sheets.ts` |
 | FR-002 | `listPlans(month)` 가 `publish_plans LEFT JOIN contents` 로 읽고 `derivePlanStatus(plan, content)` 순수 함수가 상태를 계산한다. 캘린더는 `scheduled_date` 로 그룹 | `services/plans.ts`, `lib/plan-status.ts` |
 | FR-003 | `resolveRules({channelId, lang, productId})` — `brand_rules WHERE status='active' AND (scope='common' OR (scope='country' AND country=채널.국가) OR (scope='channel' AND channel_id=…) OR (scope='product' AND product_id=…))` 를 읽고 `mergeRules(rows)` 순수 함수로 병합: `ban`·`must` 는 합집합(중복은 규칙 id 로 제거), `tone`·`format`·`persona` 는 scope 우선순위 product > channel > country > common 으로 하나만. 응답에 `appliedRuleIds[]`·`version` 포함 | `services/rules.ts`, `lib/rules-merge.ts` |
 | FR-004 | `generateTitles(llm, input)` — system = 역할·JSON 출력 형식(코드 상수) + 병합 규칙; user = 제품·채널·언어·글유형·주제·타깃. 출력 zod `TitleCandidates { items: [{title, angle}] × 3 }`. 각 제목에 `validate()` 를 돌려 차단이면 그 항목만 1회 재요청. 저장 없음. 타임아웃 20초 | `services/content-generation.ts`, `lib/llm/prompts.ts` |
@@ -95,12 +95,12 @@ flowchart LR
 |---|---|---|---|
 | 사용자 | `users` | `email` UK, `name`, `role` enum(`admin`,`editor`,`viewer`) | — |
 | 제품 | `products` | `product_code` UK, `name`, `weight_g`, `price_krw`, `price_usd`, `is_active` | — |
-| 판매채널 | `sales_channels` | `channel_code` UK, `name`, `country` char(2), `currency`, `lang`, `distribution_route` enum(`kr_domestic`,`us_export`,`ph_local`), `fee_rate`, `publish_method` enum(`manual`,`api`), `tracking_method` enum(`utm_ga4`,`nt_smartstore`,`amazon_attribution`,`redirect`), **`kind` enum(`sales`,`content`)** (ADR-011), `utm_source`, `utm_medium`, `link_policy` enum(`inline`,`bio`,`none`), `write_url`, `persona`, `tone`, `format` | — |
+| 판매채널 | `sales_channels` | `channel_code` UK, `name`, `country` char(2), `currency`, `lang` enum(`ko`,`en`), `distribution_route` enum(`kr_domestic`,`us_export`,`ph_local`), `fee_rate`, `publish_method` enum(`manual`,`api`), `tracking_method` enum(`utm_ga4`,`nt_smartstore`,`amazon_attribution`,`redirect`), **`kind` enum(`sales`,`content`)** (ADR-011), `utm_source`, `utm_medium`, `link_policy` enum(`inline`,`bio`,`none`), `write_url`, `persona`, `tone`, `format` | — |
 | 브랜드규칙 | `brand_rules` | `scope` enum(`common`,`country`,`channel`,`product`), `country`, `channel_id` FK, `product_id` FK, `rule_type` enum(`ban`,`must`,`tone`,`format`,`persona`), `lang`, `content`, `detect_pattern`, `alternative`, `reason`, `legal_basis`, `severity` enum(`block`,`warn`), `status` enum(`draft`,`active`,`retired`), `version`, `created_by` FK, `approved_by` FK, `effective_from` | idx `(status, scope, lang)` |
 | 브랜드규칙이력 | `brand_rule_history` | `rule_id` FK, `changed_by` FK, `change_type`, `before` jsonb, `after` jsonb, `reason` | — |
 | 브랜드예시 | `brand_examples` | `content_id` FK, `channel_id` FK, `lang`, `summary` (앞 800자), `reason` enum(`admin_approval`,`high_conversion`,`repeated_edit`), `evidence` jsonb, `is_active` | idx `(channel_id, lang, is_active)` |
 | 프롬프트템플릿 | `prompt_templates` | `channel_id` FK nullable, `name`, `lang`, `body`, `version`, `is_active` | idx `(channel_id, lang, is_active)` |
-| 발행계획 | `publish_plans` | `import_id` FK, `sheet_row_key` UK, `scheduled_date`, `channel_id` FK, `product_id` FK nullable, `lang`, `post_type` enum(`health_info`,`activity_news`,`comparison`,`review`), `topic_memo`, `owner_id` FK nullable, `on_hold` bool, `updated_at` | idx `(scheduled_date)` |
+| 발행계획 | `publish_plans` | `import_id` FK, `sheet_row_key` UK, `scheduled_date`, `channel_id` FK, `product_id` FK nullable, `lang` enum(`ko`,`en`), `post_type` enum(`health_info`,`activity_news`,`comparison`,`review`), `topic_memo`, `owner_id` FK nullable, `on_hold` bool, `updated_at` | idx `(scheduled_date)` |
 | 콘텐츠 | `contents` | `publish_plan_id` FK **UNIQUE nullable**, `source_content_id` FK nullable, `product_id` FK nullable, `channel_id` FK, `template_id` FK, `author_id` FK, `reviewer_id` FK, `publisher_id` FK, `lang`, `target_persona`, `status` enum(`draft`,`in_review`,`approved`,`rejected`,`published`), `title`, `title_candidates` jsonb, `body`, `regen_count`, `rule_snapshot` jsonb, `detected_terms` jsonb, `sent_prompt`, `model`, `reject_reason`, `published_url`, `url_check` enum(`ok`,`unreachable`,`skipped`) nullable, `submitted_at`, `reviewed_at`, `published_at`, `updated_at` | idx `(status, updated_at desc)`, `(author_id)` |
 | 콘텐츠이력 | `content_history` | `content_id` FK, `version_no`, `reason` enum(`regenerate`,`rejected_edit`,`manual_edit`,`submit`), `title`, `body`, `sent_prompt`, `detected_terms` jsonb, `changed_by` FK | idx `(content_id, version_no)` |
 | 콘텐츠성과 | `content_performance` | `content_id` FK, `import_id` FK, `source` enum, `period_start`, `period_end`, `clicks`, `orders` nullable, `revenue`, `currency` | UK `(content_id, source, period_start, period_end)` — Could, 스키마만 |
@@ -131,6 +131,39 @@ flowchart LR
 | `prompt_templates` | 채널별 4 (ko 2, en 2) | 목업 `submitForReview` 의 프롬프트 |
 | `cost_sheets`·`cost_items` | 4 표 (한국내수 2·미국수출 1·필리핀현지 1) | 목업 `COST_SHEETS` |
 | `fx_rates` | 오늘 2행 (PHP 24.40, USD 1378, `manual`) | 목업 `FX` |
+
+### 시트 행 계약 (`SheetPlanRow`, FR-001)
+
+PRD Q1 의 답(2026-09-13)이다. **헤더 1행, 데이터는 2행부터, 열 순서 A~H 고정.** `SHEET_RANGE` 는 `{탭}!A2:H` 꼴이고 탭 이름은 환경변수 값이 정한다. 이 소절이 시트 열의 단일 출처다 — PRD §0 은 이것을 요약한다.
+
+| 열 | 헤더 | 필수 | 입력 방식 | → `publish_plans` | 규칙 |
+|---|---|---|---|---|---|
+| A | 계획ID | 필수 | 사람이 적음 (예 `P-2026-09-001`) | `sheet_row_key` | trim 뒤 비어 있지 않음. 시트 안에서 유일 |
+| B | 발행예정일 | 필수 | 날짜 셀, 표시 형식 `YYYY-MM-DD` | `scheduled_date` | `FORMATTED_VALUE` 로 읽어 `^\d{4}-\d{2}-\d{2}$` 검사 |
+| C | 채널 | 필수 | 드롭다운 = `sales_channels.name` (`kind='content'` 4개) | `channel_id` | name 정확 일치. 불일치·빈값 → 행 건너뜀 |
+| D | 제품명 | 선택 | 드롭다운 = `products.name` 3개 | `product_id` | 빈값 → NULL(브랜드 소식형). 값이 있는데 불일치 → 행 건너뜀 |
+| E | 언어 | 필수 | 드롭다운 `ko` / `en` | `lang` | 그 둘 외 → 행 건너뜀 |
+| F | 글유형 | 필수 | 드롭다운 4개 (아래 대응표) | `post_type` | 대응표 밖 → 행 건너뜀 |
+| G | 주제·메모 | 선택 | 자유 텍스트 | `topic_memo` | 빈값 → `''` |
+| H | 담당자 | 선택 | 자유 텍스트 | `owner_id` | `users.name` 정확 일치, 실패·빈값 → NULL |
+
+필수 5 는 `publish_plans` 의 NOT NULL 컬럼(`sheet_row_key` · `scheduled_date` · `channel_id` · `lang` · `post_type`)과 1:1 이고, 선택 3 은 nullable 이거나 빈 문자열이 허용되는 컬럼이다. 열은 이보다 늘리지 않는다.
+
+**글유형 대응표.** 건강정보형 → `health_info` · 활동소식형 → `activity_news` · 비교큐레이션형 → `comparison` · 후기리뷰형 → `review`.
+
+**정규화는 trim 뿐이다.** 드롭다운 값이라 대소문자·공백 변형을 흡수하지 않는다. 흡수하면 시드와 시트가 조용히 갈라진다.
+
+**행 단위 판정.**
+- 8칸이 전부 빈 행은 무시하고 `totalRows` 에 세지 않는다
+- 같은 계획ID 가 두 번 나오면 뒤 행을 `DUPLICATE_KEY` 로 건너뛴다
+- 건너뛴 행은 `import_logs.errors` 와 `SyncResult.errors` 에 `{ row, column?, reason }` 로 남는다. `row` 는 시트 행 번호(헤더 = 1), `column` 은 열 문자
+- 건너뛴 행의 키가 이미 DB 에 있으면 그 계획은 **그대로 둔다** — 이번 읽기에 있었던 키이므로 `on_hold` 로 넘기지 않는다
+
+**오류 어휘 `SheetRowError`** (닫힌 집합, `API_SPEC.md` 와 같다): `MISSING_REQUIRED` · `INVALID_DATE` · `UNKNOWN_CHANNEL` · `UNKNOWN_PRODUCT` · `UNKNOWN_LANG` · `UNKNOWN_POST_TYPE` · `DUPLICATE_KEY`.
+
+**책임 분리.** `SheetPlanRowSchema`(zod, `lib/schemas.ts`)는 **형태**만 본다 — 계획ID 비어 있지 않음 · 날짜 정규식 · 언어 enum · 글유형 레이블 enum · 나머지 string. 이름 → id **조회**(채널·제품·담당자)는 `services/plan-sync.ts` 가 파싱 뒤에 한다. 조회 실패도 같은 `errors` 로 나간다.
+
+**읽기.** `lib/sheets.ts` 의 `readRows(range): Promise<string[][]>` — `valueRenderOption: 'FORMATTED_VALUE'`, 8칸 미만 행은 `''` 로 채운다.
 
 ## 5. API 설계
 
@@ -216,7 +249,7 @@ flowchart LR
 | `DATABASE_URL` | Neon 연결 문자열 (pooled, HTTP) | Must |
 | `ANTHROPIC_API_KEY` · `LLM_MODEL` | LLM | Must |
 | `PRODUCT_BASE_URL` | UTM 링크 목적지 (`https://bisland.kr`) | Must |
-| `GOOGLE_SERVICE_ACCOUNT_EMAIL` · `GOOGLE_PRIVATE_KEY` · `SHEET_ID` · `SHEET_RANGE` | 시트 읽기 | Must (없으면 동기화만 `SHEET_FETCH_FAILED`, 나머지 동작) |
+| `GOOGLE_SERVICE_ACCOUNT_EMAIL` · `GOOGLE_PRIVATE_KEY` · `SHEET_ID` · `SHEET_RANGE` (예 `계획!A2:H`, §4 「시트 행 계약」) | 시트 읽기 | Must (없으면 동기화만 `SHEET_FETCH_FAILED`, 나머지 동작) |
 | `CRON_SECRET` | 환율 크론 | Should |
 | `SHEET_WEBHOOK_SECRET` | Apps Script 웹훅 | Should |
 
@@ -244,4 +277,4 @@ flowchart LR
 | 8 | 필리핀어 없음 | ko·en 우선 | US-032 |
 | 9 | 콘텐츠 성과(GA4·NT·리다이렉트) 미구현, 스키마만 | 연동 비용 | US-030 |
 | 10 | LLM 출력 스키마 위반율 미측정 | 첫 런 전 | 첫 런에서 `llm_called` 로그로 잰다 |
-| 11 | 시트 컬럼 계약이 확정 안 됨 | 시트 접근 전 | PRD Q1 답 받는 즉시 `SheetPlanRow` 스키마 고정 |
+| 11 | ~~시트 컬럼 계약이 확정 안 됨~~ | — | **갚음 2026-09-13** — §4 「시트 행 계약」 |
