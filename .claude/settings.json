@@ -1,16 +1,5 @@
 {
   "hooks": {
-    "Stop": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python -m pytest scripts/ -q 2>&1"
-          }
-        ]
-      }
-    ],
     "SessionEnd": [
       {
         "hooks": [

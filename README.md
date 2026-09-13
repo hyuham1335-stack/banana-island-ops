@@ -227,7 +227,7 @@ flowchart TD
 | `agents/impl-writer.md` · `agents/test-writer.md` | 03 이 **병렬로** 부르는 구현 담당과 테스트 담당입니다. 각자 자기 경로만 건드립니다 |
 | `agents/plan-reviewer.md` | 01·02 가 부르는 검토자입니다. 계획을 직접 고치지 않고 지적만 냅니다 — 02 에서는 외부 플랜 리뷰 도구가 없을 때의 폴백입니다 |
 | `skills/{data-layer,security,architecture,test-quality,docs}-reviewer/SKILL.md` | 05 의 리뷰어 5종입니다(데이터·보안·구조·테스트 품질·문서). 변경된 파일이 각자의 담당 범위에 걸리면 켜집니다. 문서 리뷰어만 소스 변경이 0인 런에서 켜집니다 |
-| `settings.json` | 훅 3개입니다 — 응답 종료 시 테스트 실행, 세션 종료 시 기록, 위험한 셸 명령 차단 |
+| `settings.json` | 훅 2개입니다 — 세션 종료 시 기록, 위험한 셸 명령 차단 |
 
 ### `docs/`
 
@@ -235,7 +235,7 @@ flowchart TD
 |---|---|
 | `docs/` 바로 아래 7개 | **프로젝트가 채우는 자리**입니다. 빈 골격으로 배포됩니다 |
 | `docs/harness/ROADMAP.md` | 이 템플릿의 구성물, 시작 순서, **검증된 것과 아직인 것** |
-| `docs/harness/DECISIONS.md` | 왜 그렇게 만들었는지에 대한 결정 기록입니다 (`ADR-H001`~`ADR-H039`) |
+| `docs/harness/DECISIONS.md` | 왜 그렇게 만들었는지에 대한 결정 기록입니다 (`ADR-H001`~`ADR-H040`) |
 | `docs/harness/PILOT-LOG.md` | 런마다 실제로 잰 값입니다. **추정치는 적지 않고, 재보지 않은 것은 "미측정" 으로 남깁니다** |
 | `docs/harness/pipeline/team-spec.md` | **8단계의 원본 명세**입니다. 동작을 바꾸려면 여기부터 고칩니다 |
 | `docs/harness/pipeline/ledger/taxonomy.json` | 지적을 분류하는 어휘의 단일 출처입니다 |
@@ -305,5 +305,5 @@ python -m pytest scripts/
   페이즈별 상세, 종료 코드표, 실패 분류, 귀속 규칙, 승격 기준이 전부 여기 있습니다
 - [docs/harness/ROADMAP.md](docs/harness/ROADMAP.md) — 템플릿의 구성물(§1), 시작 순서(§4),
   **검증된 것과 아직인 것**(§6)
-- [docs/harness/DECISIONS.md](docs/harness/DECISIONS.md) — 왜 그렇게 만들었는지 (`ADR-H001`~`ADR-H039`)
+- [docs/harness/DECISIONS.md](docs/harness/DECISIONS.md) — 왜 그렇게 만들었는지 (`ADR-H001`~`ADR-H040`)
 - [CLAUDE.md](CLAUDE.md) — 작업 원칙과 프로젝트 규칙. **작업자가 직접 읽어야 지켜집니다**

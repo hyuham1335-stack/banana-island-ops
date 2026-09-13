@@ -11,7 +11,7 @@
 > 프로젝트의 사실이지 이 템플릿의 사실이 아니고, 남의 실측을 상속하는 것은 이
 > 리포가 [ADR-H001](DECISIONS.md)에서 금지한 것과 같은 위반이다. **원본은 추출
 > 이력(`git log`)에 그대로 있고**, 그 실측이 무엇을 정했는지는
-> [DECISIONS.md](DECISIONS.md) 의 ADR-H001~H039 가 든다.
+> [DECISIONS.md](DECISIONS.md) 의 ADR-H001~H040 가 든다.
 
 ---
 
