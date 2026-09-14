@@ -172,7 +172,7 @@
   },
   "budget": {
     "files_max": 10,
-    "lines_max": 1000,
+    "lines_max": 1500,
     "model_calls_max": 24
   },
   "profile": {
