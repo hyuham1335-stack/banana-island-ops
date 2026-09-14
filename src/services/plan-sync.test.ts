@@ -228,6 +228,8 @@ interface DbMockOptions {
   usersRows: { id: number; name: string }[];
   heldRows: { sheetRowKey: string }[];
   importLogId: number;
+  /** readRows 실패 경로에서 SHEET_FETCH_FAILED 의 details.lastSyncAt 조회용. 기본값 없음(null). */
+  lastSyncRows?: { createdAt: Date }[];
 }
 
 function createDbMock(opts: DbMockOptions) {
@@ -242,6 +244,15 @@ function createDbMock(opts: DbMockOptions) {
         if (table === schema.salesChannels) return Promise.resolve(opts.channelsRows);
         if (table === schema.products) return Promise.resolve(opts.productsRows);
         if (table === schema.users) return Promise.resolve(opts.usersRows);
+        if (table === schema.importLogs) {
+          // .where().orderBy().limit(1) 로 체이닝 — 최근 import_logs 1행 조회(읽기 전용).
+          const node = {
+            where: vi.fn(() => node),
+            orderBy: vi.fn(() => node),
+            limit: vi.fn(() => Promise.resolve(opts.lastSyncRows ?? [])),
+          };
+          return node;
+        }
         throw new Error("unexpected select().from() table in test mock");
       }),
     };
@@ -324,14 +335,16 @@ describe("syncPlansFromSheet", () => {
     expect(updateCalls).toHaveLength(2);
   });
 
-  it("(AC5) readRows 가 실패하면 DB 를 전혀 건드리지 않고 SHEET_FETCH_FAILED 를 돌려준다", async () => {
+  it("(AC5) readRows 가 실패하면 publish_plans·import_logs 를 전혀 쓰지 않고 SHEET_FETCH_FAILED(+lastSyncAt) 를 돌려준다", async () => {
     const sheets: SheetsClient = { readRows: vi.fn().mockRejectedValue(new Error("network down")) };
+    const lastSyncAt = new Date("2026-09-12T09:12:00Z");
     const { db, selectCalls, insertCalls, updateCalls } = createDbMock({
       channelsRows: [],
       productsRows: [],
       usersRows: [],
       heldRows: [],
       importLogId: 1,
+      lastSyncRows: [{ createdAt: lastSyncAt }],
     });
 
     const result = await syncPlansFromSheet({ sheets, db }, "manual");
@@ -339,10 +352,30 @@ describe("syncPlansFromSheet", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error.code).toBe("SHEET_FETCH_FAILED");
+      // API_SPEC.md 오류 어휘 표: SHEET_FETCH_FAILED 의 details 는 { lastSyncAt } 다.
+      expect(result.error.details).toEqual({ lastSyncAt });
     }
-    expect(selectCalls).toHaveLength(0);
+    // 마지막 동기화 시각 조회(읽기)만 하고, publish_plans·import_logs 는 전혀 쓰지 않는다.
+    expect(selectCalls).toHaveLength(1);
     expect(insertCalls).toHaveLength(0);
     expect(updateCalls).toHaveLength(0);
+  });
+
+  it("(AC5 지지) 이전 동기화 기록이 없으면 lastSyncAt 은 null", async () => {
+    const sheets: SheetsClient = { readRows: vi.fn().mockRejectedValue(new Error("network down")) };
+    const { db } = createDbMock({
+      channelsRows: [],
+      productsRows: [],
+      usersRows: [],
+      heldRows: [],
+      importLogId: 1,
+      lastSyncRows: [],
+    });
+
+    const result = await syncPlansFromSheet({ sheets, db }, "manual");
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.details).toEqual({ lastSyncAt: null });
   });
 
   it("(AC6) 시트에 데이터 행이 0개면 totalRows 0 · errors 빈 배열로 Result.ok 를 돌려준다", async () => {

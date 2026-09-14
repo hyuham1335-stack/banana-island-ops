@@ -1,4 +1,4 @@
-import { and, eq, inArray, notInArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, notInArray, sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import { importLogs, products, publishPlans, salesChannels, users } from "@/lib/db/schema";
 import { getEnv } from "@/lib/env";
@@ -149,9 +149,20 @@ export async function syncPlansFromSheet(
         message: err instanceof Error ? err.message : String(err),
       }),
     );
+    // API_SPEC.md 의 오류 어휘 표: SHEET_FETCH_FAILED 의 details 는 { lastSyncAt } 다.
+    const [last] = await deps.db
+      .select({ createdAt: importLogs.createdAt })
+      .from(importLogs)
+      .where(eq(importLogs.target, "publish_plans"))
+      .orderBy(desc(importLogs.createdAt))
+      .limit(1);
     return {
       ok: false,
-      error: { code: "SHEET_FETCH_FAILED", message: "시트를 읽지 못했습니다." },
+      error: {
+        code: "SHEET_FETCH_FAILED",
+        message: "시트를 읽지 못했습니다.",
+        details: { lastSyncAt: last?.createdAt ?? null },
+      },
     };
   }
 
