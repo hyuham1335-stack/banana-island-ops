@@ -103,6 +103,13 @@ export function parseSheetRow(
 }
 
 /**
+ * GET /api/plans 쿼리 검증 — docs/API_SPEC.md 「GET /api/plans?month=YYYY-MM」(FR-002 계약).
+ */
+export const MonthQuerySchema = z.object({
+  month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
+});
+
+/**
  * GET /api/rules/resolve 쿼리 검증 — docs/API_SPEC.md 「GET /api/rules/resolve」(FR-003 계약).
  * URLSearchParams 는 문자열만 주므로 channelId·productId 는 coerce 로 숫자화한다.
  * productId 는 선택값 — 라우트가 없으면 undefined 를 넣어 optional() 을 타게 한다.
