@@ -101,3 +101,10 @@ export function parseSheetRow(
   }
   return { ok: true, row: result.data };
 }
+
+/**
+ * GET /api/plans 쿼리 검증 — docs/API_SPEC.md 「GET /api/plans?month=YYYY-MM」(FR-002 계약).
+ */
+export const MonthQuerySchema = z.object({
+  month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
+});
