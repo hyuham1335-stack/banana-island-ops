@@ -94,7 +94,7 @@ python scripts/harness.py init --adapter nextjs-ts --name my-project
 | 역할과 소유 경계 | 구현 담당은 `src/app/**` `src/components/**` `src/lib/**` 등, 테스트 담당은 `src/**/*.test.ts` |
 | 계약 문서의 절 제목 | `## 유닛` `## 진입점` `## 오류 어휘` 등. 여기 적힌 글자와 `harness/templates/contract.md` 가 정확히 같아야 합니다 |
 | 브랜치 규칙 | 기준 브랜치는 `main`, 작업 브랜치는 `feat-` 로 시작, `main` 직접 push 금지 |
-| 런당 예산 | 파일 10개 · 400줄 · 모델 호출 24회 |
+| 런당 예산 | 파일 10개 · 1500줄 · 모델 호출 24회 |
 | 수정 금지 경로 | `harness/**` `docs/**` `scripts/**` `.claude/**` 등 |
 
 **지금 프로필은 `nextjs-ts` 하나뿐입니다.** 다른 스택이라면 이 명령 대신
