@@ -82,8 +82,10 @@
   "cross_verify": {
     "required": false,
     "primary": null,
-    "fallback": "plan-reviewer"
+    "fallback": "plan-reviewer",
+    "secondary": {"provider": "openai", "status": "not_configured"}
   },
+  "_budget_note": "lines_max 는 템플릿에서 400→1000 으로 올랐다(ADR-H045, exit 9 반복 마찰). 이 프로젝트는 그 이후 실측 마찰로 1000→1500 까지 한 단계 더 올려 유지한다 — 템플릿보다 앞서 있는 값이라 되돌리지 않는다. files_max(10)·model_calls_max(24)는 안 건드렸다.",
   "budget": {
     "files_max": 10,
     "lines_max": 1500,
