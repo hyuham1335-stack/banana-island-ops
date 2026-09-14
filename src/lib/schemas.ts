@@ -101,3 +101,14 @@ export function parseSheetRow(
   }
   return { ok: true, row: result.data };
 }
+
+/**
+ * GET /api/rules/resolve 쿼리 검증 — docs/API_SPEC.md 「GET /api/rules/resolve」(FR-003 계약).
+ * URLSearchParams 는 문자열만 주므로 channelId·productId 는 coerce 로 숫자화한다.
+ * productId 는 선택값 — 라우트가 없으면 undefined 를 넣어 optional() 을 타게 한다.
+ */
+export const RulesResolveQuerySchema = z.object({
+  channelId: z.coerce.number().int().positive(),
+  lang: z.enum(["ko", "en"]),
+  productId: z.coerce.number().int().positive().optional(),
+});
