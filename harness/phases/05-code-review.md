@@ -95,6 +95,12 @@ python scripts/pipeline/cli.py contract-trace --run-id {run_id}
 같은 diff 가 런마다 다른 리뷰를 받고, 그러면 `escaped_05` 를 세는 것이 의미를
 잃는다.
 
+**`gen`(일반 정합성)은 소스 변경이 있으면 항상 켜진다** — glob 이 아니라
+`roles[].owns` 로 켜지므로 프로젝트 레이아웃과 무관하다 (ADR-H043). "구현이
+계약대로 동작하는가" 를 보는 관점이 여기 있어서 07 이 깨끗한 런의 내장 리뷰를
+생략한다. gen 이 빠진 채 05 가 `ok` 가 되는 경로는 없다 — 계획된 리뷰어가
+실패하면 `review05.status` 가 `degraded` 이고 07 이 `medium` 으로 메운다.
+
 각 리뷰어에게 주는 것:
 
 - **인라인 diff · 계약 · `05_trace.json`**. 그게 전부다
@@ -270,7 +276,7 @@ python scripts/pipeline/cli.py record --phase 05 --reviewer {code} \
 | `need_more_context` 계속 참 | 판단 | 1회에 한해 파일 목록 명시 추가. 반복되면 라우팅 결함으로 보고 |
 | 두 리뷰어 지적이 상반 | 판단 | **계약 우선** → `rules_dir` 우선. 판정을 원장에 |
 | `CONTRACT_DEFECT` 발견 | 정책 | 수리하지 않는다 → **에스컬레이션** |
-| diff 가 인라인 상한 초과 | — | 경로 전달 폴백 + 원장 기록 |
+| diff 가 인라인 상한 초과 | — | **기계가 정한다** — `next` 가 `review.inline_max` 로 재고 봉투가 "경로로 전달하라" 고 말한다. 네 재량이 아니다 (ADR-H042). 폴백 사실이 상태에 남는다 |
 | `review_repair` 초과 · 동일 sig 2회 | 정책 | 에스컬레이션. **계약 결함을 먼저 의심**하라고 패킷에 적는다 |
 
 **`review_repair.max: 2` · `stuck_after_identical: 2` · `local_repair.max_per_run: 3`
