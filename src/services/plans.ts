@@ -93,6 +93,7 @@ export async function listPlans(
     planQuery.leftJoin(contents, eq(contents.publishPlanId, publishPlans.id));
     planQuery.leftJoin(users, eq(publishPlans.ownerId, users.id));
     planQuery.where(and(gte(publishPlans.scheduledDate, start), lt(publishPlans.scheduledDate, end)));
+    planQuery.orderBy(publishPlans.scheduledDate);
 
     const lastSyncQuery = deps.db
       .select({
@@ -125,7 +126,7 @@ export async function listPlans(
         ownerName: row.ownerName ?? null,
         onHold: row.onHold,
         status: derivePlanStatus({ onHold: row.onHold }, content),
-        contentId: content ? row.contentId : null,
+        contentId: row.contentId,
       };
     });
 
