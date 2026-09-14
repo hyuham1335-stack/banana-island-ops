@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
+import { Nav } from "@/components/shell/Nav";
+import { Topbar } from "@/components/shell/Topbar";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -10,7 +12,20 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="ko">
-      <body>{children}</body>
+      <head>
+        <link rel="preconnect" href="https://cdn.jsdelivr.net" />
+        <link
+          rel="stylesheet"
+          href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.css"
+        />
+      </head>
+      <body>
+        <Topbar />
+        <div className="shell">
+          <Nav />
+          <main className="main">{children}</main>
+        </div>
+      </body>
     </html>
   );
 }
