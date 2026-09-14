@@ -15,11 +15,11 @@ export interface SheetsClient {
 
 type SheetsEnv = Pick<Env, "GOOGLE_SERVICE_ACCOUNT_EMAIL" | "GOOGLE_PRIVATE_KEY" | "SHEET_ID">;
 
-// googleapis 의 JWT 는 실제로는 클래스(`new` 필요)지만, 테스트가 모킹하는 형태는
-// 팩토리 함수 호출이다 — 타입만 빌려 쓰고 호출은 함수로 한다.
 type JwtOptions = ConstructorParameters<typeof google.auth.JWT>[0];
-type JwtInstance = InstanceType<typeof google.auth.JWT>;
-const createJwt = google.auth.JWT as unknown as (options: JwtOptions) => JwtInstance;
+
+function createJwt(options: JwtOptions) {
+  return new google.auth.JWT(options);
+}
 
 export function createSheetsClient(env: SheetsEnv): SheetsClient {
   return {

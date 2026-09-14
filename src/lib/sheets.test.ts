@@ -5,11 +5,19 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const getMock = vi.fn();
 const sheetsFactoryMock = vi.fn(() => ({ spreadsheets: { values: { get: getMock } } }));
-const jwtMock = vi.fn().mockImplementation((config: unknown) => ({ __config: config }));
+
+// 실제 googleapis 의 JWT 는 클래스라 `new` 없이 호출하면 던진다 — 그 계약을 그대로 흉내낸다.
+// (vi.fn() 으로 모킹하면 이 계약이 사라져서 프로덕션 코드가 `new` 없이 불러도 테스트가 못 잡는다)
+class JwtMock {
+  __config: unknown;
+  constructor(config: unknown) {
+    this.__config = config;
+  }
+}
 
 vi.mock("googleapis", () => ({
   google: {
-    auth: { JWT: jwtMock },
+    auth: { JWT: JwtMock },
     sheets: sheetsFactoryMock,
   },
 }));
