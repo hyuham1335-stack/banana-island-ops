@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Tag } from "@/components/ui/Tag";
-import { channelLabel, POST_TYPE_LABELS, productLabel, type PostType } from "@/components/plan-format";
+import { POST_TYPE_LABELS, productLabel, type PostType } from "@/components/plan-format";
 import type { PlanStatus } from "@/types/index";
 
 /** Calendar 가 필요로 하는 필드만 — src/services/plans.ts 의 Plan 을 그대로 import 하지 않는다
@@ -10,7 +10,9 @@ export interface PlanEvent {
   sheetRowKey: string;
   scheduledDate: string;
   channelId: number;
+  channelName: string;
   productId: number | null;
+  productName: string | null;
   lang: "ko" | "en";
   postType: PostType;
   topicMemo: string;
@@ -109,7 +111,7 @@ function CalendarEvent({ plan }: { plan: PlanEvent }) {
     <>
       <div>{POST_TYPE_LABELS[plan.postType]}</div>
       <div className="ev-channel">
-        {channelLabel(plan.channelId)} · {productLabel(plan.productId)}
+        {plan.channelName} · {productLabel(plan.productName)}
       </div>
       <Tag status={plan.status} />
     </>
@@ -124,12 +126,14 @@ function CalendarEvent({ plan }: { plan: PlanEvent }) {
     planId: String(plan.id),
     sheetRowKey: plan.sheetRowKey,
     channelId: String(plan.channelId),
+    channelName: plan.channelName,
     lang: plan.lang,
     postType: plan.postType,
     topicMemo: plan.topicMemo,
     scheduledDate: plan.scheduledDate,
   });
   if (plan.productId !== null) params.set("productId", String(plan.productId));
+  if (plan.productName !== null) params.set("productName", plan.productName);
   if (plan.ownerName !== null) params.set("ownerName", plan.ownerName);
 
   return (

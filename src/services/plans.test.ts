@@ -68,6 +68,8 @@ interface PlanRow {
   contentId: number | null;
   contentStatus: "draft" | "in_review" | "approved" | "rejected" | "published" | null;
   ownerName: string | null;
+  channelName: string | null;
+  productName: string | null;
 }
 
 interface LastSyncRow {
@@ -88,6 +90,10 @@ function createDbMock(opts: { planRows: PlanRow[]; lastSyncRows: LastSyncRow[] }
         if (table === schema.importLogs) return makeChainNode(opts.lastSyncRows);
         throw new Error("unexpected select().from() table in test mock");
       }),
+      // 참고: channelName·productName 은 leftJoin(salesChannels)·leftJoin(products) 로
+      // planRows 자체에 이미 얹혀 나온다고 가정한다(위 makeChainNode 패턴 — from() 이후
+      // 얼마나 조인하든 같은 resolvedValue). 별도 select().from(salesChannels|products) 분기는
+      // 필요 없다.
     };
   });
   return { db: { select } as unknown as Db, select, selectCalls };
@@ -116,6 +122,8 @@ describe("listPlans", () => {
           contentId: null,
           contentStatus: null,
           ownerName: null,
+          channelName: "카카오스토어",
+          productName: null,
         },
         {
           id: 2,
@@ -131,6 +139,8 @@ describe("listPlans", () => {
           contentId: 55,
           contentStatus: "approved",
           ownerName: "김담당",
+          channelName: "Shopee PH",
+          productName: "황금바나나칩",
         },
       ],
       lastSyncRows: [{ id: 9, createdAt, totalRows: 12, okRows: 10, failedRows: 2 }],
@@ -156,6 +166,8 @@ describe("listPlans", () => {
         onHold: false,
         status: "scheduled",
         contentId: null,
+        channelName: "카카오스토어",
+        productName: null,
       },
       {
         id: 2,
@@ -171,6 +183,8 @@ describe("listPlans", () => {
         onHold: false,
         status: "approved",
         contentId: 55,
+        channelName: "Shopee PH",
+        productName: "황금바나나칩",
       },
     ]);
 
@@ -220,6 +234,8 @@ describe("listPlans", () => {
           contentId: null,
           contentStatus: null,
           ownerName: null,
+          channelName: "카카오스토어",
+          productName: null,
         },
       ],
       lastSyncRows: [],
@@ -231,6 +247,39 @@ describe("listPlans", () => {
     if (result.ok) {
       expect(result.data.plans[0]?.ownerId).toBeNull();
       expect(result.data.plans[0]?.ownerName).toBeNull();
+    }
+  });
+
+  it("channelId·productId 를 실제 채널명·제품명으로 붙여 돌려준다 (leftJoin salesChannels·products)", async () => {
+    const { db } = createDbMock({
+      planRows: [
+        {
+          id: 4,
+          sheetRowKey: "PLAN-4",
+          scheduledDate: "2026-09-08",
+          channelId: 13,
+          productId: 21,
+          lang: "ko",
+          postType: "comparison",
+          topicMemo: "토픽4",
+          ownerId: null,
+          onHold: false,
+          contentId: null,
+          contentStatus: null,
+          ownerName: null,
+          channelName: "스마트스토어",
+          productName: "바나나칩 오리지널",
+        },
+      ],
+      lastSyncRows: [],
+    });
+
+    const result = await listPlans({ db }, "2026-09");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.plans[0]?.channelName).toBe("스마트스토어");
+      expect(result.data.plans[0]?.productName).toBe("바나나칩 오리지널");
     }
   });
 

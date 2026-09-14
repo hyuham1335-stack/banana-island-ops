@@ -1,7 +1,7 @@
 /**
  * 계획 표시용 프레젠테이션 헬퍼 — 순수 UI 매핑이라 lib/(공유 순수 함수 계층)가 아니라
- * components/ 쪽에 둔다. GET /api/channels·/api/products 가 아직 없어 이름을 못 붙이므로
- * 채널·제품은 ID 로만 표시한다(이번 스코프의 제약, docs/ARCHITECTURE.md 참고).
+ * components/ 쪽에 둔다. 채널·제품 이름은 src/services/plans.ts 가 salesChannels·products 를
+ * leftJoin 해 이미 붙여 준다 — 여기서는 표시 형식만 맞춘다.
  */
 
 export type PostType = "health_info" | "activity_news" | "comparison" | "review";
@@ -14,10 +14,6 @@ export const POST_TYPE_LABELS: Record<PostType, string> = {
   review: "후기리뷰형",
 };
 
-export function channelLabel(channelId: number): string {
-  return `채널 #${channelId}`;
-}
-
-export function productLabel(productId: number | null): string {
-  return productId === null ? "제품 없음" : `제품 #${productId}`;
+export function productLabel(productName: string | null): string {
+  return productName ?? "제품 없음";
 }

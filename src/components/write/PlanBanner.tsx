@@ -1,10 +1,12 @@
-import { channelLabel, POST_TYPE_LABELS, productLabel, type PostType } from "@/components/plan-format";
+import { POST_TYPE_LABELS, productLabel, type PostType } from "@/components/plan-format";
 
 export interface PlanBannerData {
   planId: number;
   scheduledDate: string;
   channelId: number;
+  channelName: string;
   productId: number | null;
+  productName: string | null;
   postType: PostType;
   ownerName: string | null;
   sheetRowKey: string;
@@ -25,11 +27,11 @@ export function PlanBanner({ plan }: { plan: PlanBannerData }) {
       </div>
       <div>
         <dt>채널</dt>
-        <dd>{channelLabel(plan.channelId)}</dd>
+        <dd>{plan.channelName}</dd>
       </div>
       <div>
         <dt>제품</dt>
-        <dd>{productLabel(plan.productId)}</dd>
+        <dd>{productLabel(plan.productName)}</dd>
       </div>
       <div>
         <dt>글 유형</dt>

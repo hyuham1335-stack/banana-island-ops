@@ -1,6 +1,6 @@
 import { and, desc, eq, gte, lt } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
-import { contents, importLogs, publishPlans, users } from "@/lib/db/schema";
+import { contents, importLogs, products, publishPlans, salesChannels, users } from "@/lib/db/schema";
 import { derivePlanStatus } from "@/lib/plan-status";
 import type { ErrorCode } from "@/lib/http";
 import type { ContentStatus, PlanStatus } from "@/types/index";
@@ -24,7 +24,9 @@ export interface Plan {
   sheetRowKey: string;
   scheduledDate: string;
   channelId: number;
+  channelName: string;
   productId: number | null;
+  productName: string | null;
   lang: "ko" | "en";
   postType: PostType;
   topicMemo: string;
@@ -79,7 +81,9 @@ export async function listPlans(
         sheetRowKey: publishPlans.sheetRowKey,
         scheduledDate: publishPlans.scheduledDate,
         channelId: publishPlans.channelId,
+        channelName: salesChannels.name,
         productId: publishPlans.productId,
+        productName: products.name,
         lang: publishPlans.lang,
         postType: publishPlans.postType,
         topicMemo: publishPlans.topicMemo,
@@ -92,6 +96,8 @@ export async function listPlans(
       .from(publishPlans);
     planQuery.leftJoin(contents, eq(contents.publishPlanId, publishPlans.id));
     planQuery.leftJoin(users, eq(publishPlans.ownerId, users.id));
+    planQuery.leftJoin(salesChannels, eq(salesChannels.id, publishPlans.channelId));
+    planQuery.leftJoin(products, eq(products.id, publishPlans.productId));
     planQuery.where(and(gte(publishPlans.scheduledDate, start), lt(publishPlans.scheduledDate, end)));
     planQuery.orderBy(publishPlans.scheduledDate);
 
@@ -118,7 +124,11 @@ export async function listPlans(
         sheetRowKey: row.sheetRowKey,
         scheduledDate: row.scheduledDate,
         channelId: row.channelId,
+        // salesChannels 는 publishPlans.channelId 의 FK 대상(not null, RESTRICT)이라
+        // leftJoin 이어도 실제로는 항상 매칭된다 — ?? "" 는 타입만 맞추는 방어값이다.
+        channelName: row.channelName ?? "",
         productId: row.productId,
+        productName: row.productName,
         lang: row.lang,
         postType: row.postType,
         topicMemo: row.topicMemo,

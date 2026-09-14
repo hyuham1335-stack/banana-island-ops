@@ -101,7 +101,8 @@ BanRule { ruleId, label, detectPattern, severity: 'block'|'warn', alternative, r
 
 ```
 Plan {
-  id, sheetRowKey, scheduledDate, channelId, productId: number|null, lang,
+  id, sheetRowKey, scheduledDate, channelId, channelName: string,
+  productId: number|null, productName: string|null, lang,
   postType: PostType, topicMemo, ownerId: number|null, ownerName: string|null,
   onHold: boolean,
   status: PlanStatus,          // 파생값 — 저장하지 않는다
