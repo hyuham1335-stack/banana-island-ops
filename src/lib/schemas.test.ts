@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { ContentListQuerySchema, SheetPlanRowSchema, parseSheetRow } from "./schemas";
+import {
+  ApproveInputSchema,
+  ContentListQuerySchema,
+  RejectInputSchema,
+  SheetPlanRowSchema,
+  parseSheetRow,
+} from "./schemas";
 
 // 계약: _workspace/contract_must-fr001-sheet-sync.md 「유닛 · src/lib/schemas.ts」
 // docs/API_SPEC.md §POST /api/plans/sync 의 SheetPlanRow 계약과 1:1.
@@ -206,5 +212,61 @@ describe("ContentListQuerySchema", () => {
 
   it("mine 이 'true' 가 아닌 문자열(예: 'false')이면 거부한다", () => {
     expect(ContentListQuerySchema.safeParse({ mine: "false" }).success).toBe(false);
+  });
+});
+
+// 계약: FR-010·FR-011(런 20260915-2042-728c) 「데이터 형태 · ApproveInput { registerAsExample: boolean }」
+describe("ApproveInputSchema", () => {
+  it("registerAsExample: true 는 통과한다", () => {
+    const result = ApproveInputSchema.safeParse({ registerAsExample: true });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data).toEqual({ registerAsExample: true });
+  });
+
+  it("registerAsExample: false 는 통과한다", () => {
+    const result = ApproveInputSchema.safeParse({ registerAsExample: false });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data).toEqual({ registerAsExample: false });
+  });
+
+  it("registerAsExample 필드가 없으면 거부한다", () => {
+    expect(ApproveInputSchema.safeParse({}).success).toBe(false);
+  });
+
+  it("registerAsExample 이 문자열 타입이면 거부한다", () => {
+    expect(ApproveInputSchema.safeParse({ registerAsExample: "true" }).success).toBe(false);
+  });
+});
+
+// 계약: FR-010·FR-011(런 20260915-2042-728c) 「데이터 형태 · RejectInput { reason: string }」
+// trim 후 1~1000자.
+describe("RejectInputSchema", () => {
+  it("정상 사유(1자 이상 1000자 이하)는 통과한다", () => {
+    const result = RejectInputSchema.safeParse({ reason: "표현 수정이 필요합니다." });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.reason).toBe("표현 수정이 필요합니다.");
+  });
+
+  it("빈 문자열은 거부한다", () => {
+    expect(RejectInputSchema.safeParse({ reason: "" }).success).toBe(false);
+  });
+
+  it("공백만 있는 문자열은 trim 후 빈 문자열이 되어 거부한다", () => {
+    expect(RejectInputSchema.safeParse({ reason: "   " }).success).toBe(false);
+  });
+
+  it("1000자는 통과하지만 1001자는 거부한다", () => {
+    expect(RejectInputSchema.safeParse({ reason: "가".repeat(1000) }).success).toBe(true);
+    expect(RejectInputSchema.safeParse({ reason: "가".repeat(1001) }).success).toBe(false);
+  });
+
+  it("앞뒤 공백은 trim 되어 검증·저장된다", () => {
+    const result = RejectInputSchema.safeParse({ reason: "  표현 수정 필요  " });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.reason).toBe("표현 수정 필요");
+  });
+
+  it("reason 필드가 없으면 거부한다", () => {
+    expect(RejectInputSchema.safeParse({}).success).toBe(false);
   });
 });

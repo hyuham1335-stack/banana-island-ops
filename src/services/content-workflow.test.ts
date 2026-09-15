@@ -52,7 +52,18 @@ import * as schema from "@/lib/db/schema";
 import type { ContentsRow } from "@/lib/content-detail";
 import type { BrandRuleRow } from "@/lib/rules-merge";
 import { resolveRules } from "@/services/rules";
-import { getContentDetail, listContents, resolveContentLink, transition } from "./content-workflow";
+import { approveContent, getContentDetail, listContents, resolveContentLink, transition } from "./content-workflow";
+
+// 계약: FR-010·FR-011(런 20260915-2042-728c) 「유닛 · src/services/content-workflow.ts ·
+// TRANSITIONS(approve/reject)·resolveActorUserId·transition(approve/reject 경로)·
+// approveContent」— 위 FR-009 스위트에 이어 붙인다. createDbMock 을 users·brandExamples
+// 테이블까지 지원하도록 확장해 재사용한다(아래 opts.userRows·opts.brandExampleInsertShouldThrow).
+//
+// 플랜과의 차이(F-2·F-1·F-3-new) 수리 검증:
+//   - F-2: approve 의 .set() 이 rejectReason:null 을 명시하는지 — reject→submit→approve 를
+//     거쳐 rejectReason 이 비어있지 않았던 픽스처로 확인한다.
+//   - F-1: submittedAt 이 approve/reject 모두 row(=submit 시점 값) 그대로 보존되는지.
+//   - F-3-new: approve/reject 성공 시 content_history insert 가 대칭적으로 호출되지 않는지.
 
 // ---------------------------------------------------------------------------
 // DB 스텁 헬퍼 — src/services/content-generation.test.ts 와 같은 Proxy 체인 패턴.
@@ -142,10 +153,15 @@ function createDbMock(opts: {
   productRows?: ProductRow[];
   historyCountRows?: { count: number }[];
   updateReturningResult?: Record<string, unknown>[];
+  // resolveActorUserId(approve/reject)가 조회하는 users — 미지정 시 빈 배열(시드 전, null 근사).
+  userRows?: { id: number }[];
+  // approveContent 의 brandExamples insert 가 예외를 던지는 경로(계약 케이스 15)를 재현한다.
+  brandExampleInsertShouldThrow?: boolean;
 }) {
   const updateSetCalls: unknown[] = [];
   const updateWhereCalls: unknown[] = [];
   const insertValuesCalls: unknown[] = [];
+  const brandExampleInsertCalls: unknown[] = [];
   let contentsSelectCallIndex = 0;
 
   const select = vi.fn(() => ({
@@ -161,6 +177,7 @@ function createDbMock(opts: {
       if (table === schema.brandRules) return makeChainNode(opts.ruleRows ?? []);
       if (table === schema.products) return makeChainNode(opts.productRows ?? []);
       if (table === schema.contentHistory) return makeChainNode(opts.historyCountRows ?? [{ count: 0 }]);
+      if (table === schema.users) return makeChainNode(opts.userRows ?? []);
       throw new Error(`unexpected select().from() table in test mock: ${String(table)}`);
     }),
   }));
@@ -190,13 +207,26 @@ function createDbMock(opts: {
   // select count(*) → db.insert(contentHistory).values() 두 단계다. 상태 UPDATE(낙관적 잠금)가
   // 성공을 확인한 뒤에만 호출된다.
   const insert = vi.fn((table: unknown) => {
-    if (table !== schema.contentHistory) throw new Error("unexpected insert() table in test mock");
-    return {
-      values: vi.fn((vals: unknown) => {
-        insertValuesCalls.push(vals);
-        return makeChainNode(undefined);
-      }),
-    };
+    if (table === schema.contentHistory) {
+      return {
+        values: vi.fn((vals: unknown) => {
+          insertValuesCalls.push(vals);
+          return makeChainNode(undefined);
+        }),
+      };
+    }
+    if (table === schema.brandExamples) {
+      return {
+        values: vi.fn((vals: unknown) => {
+          brandExampleInsertCalls.push(vals);
+          // 계약 케이스 15: insert 가 예외를 던지는 경로 — approveContent 가 이 예외를
+          // 삼키고 exampleSkippedReason 으로 바꾸는지를 본다(transition() 자체는 이미 성공).
+          if (opts.brandExampleInsertShouldThrow) throw new Error("brand example insert failed");
+          return makeChainNode(undefined);
+        }),
+      };
+    }
+    throw new Error("unexpected insert() table in test mock");
   });
 
   return {
@@ -207,6 +237,7 @@ function createDbMock(opts: {
     updateSetCalls,
     updateWhereCalls,
     insertValuesCalls,
+    brandExampleInsertCalls,
   };
 }
 
@@ -613,6 +644,199 @@ describe("transition", () => {
       { channelId: row.channelId, lang: "ko", productId: undefined },
     );
   });
+
+  // -------------------------------------------------------------------------
+  // approve / reject — FR-010·FR-011(런 20260915-2042-728c).
+  // -------------------------------------------------------------------------
+
+  it("approve: in_review→approved 성공 — reviewerId·reviewedAt 이 채워지고, rejectReason 이 null 로 초기화되며(F-2 수리 — 비어있지 않던 값이었던 픽스처), submittedAt 은 row 그대로 보존된다(F-1 수리)", async () => {
+    const submittedAt = new Date("2026-09-10T00:00:00Z");
+    const row = contentRow({ status: "in_review", rejectReason: "이전 반려 사유", submittedAt });
+    const reviewedAt = new Date("2026-09-15T01:00:00Z");
+    const { db, update, updateSetCalls } = createDbMock({
+      contentRows: [row],
+      userRows: [{ id: 42 }],
+      updateReturningResult: [
+        {
+          updatedAt: reviewedAt,
+          submittedAt,
+          reviewerId: 42,
+          reviewedAt,
+          rejectReason: null,
+        },
+      ],
+    });
+
+    const result = await transition({ db, ...DEPS }, 1, "approve", { role: "admin" });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.status).toBe("approved");
+      expect(result.data.reviewerId).toBe(42);
+      expect(result.data.reviewedAt).toBe(reviewedAt.toISOString());
+      expect(result.data.rejectReason).toBeNull();
+      expect(result.data.submittedAt).toBe(submittedAt.toISOString());
+    }
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(updateSetCalls[0]).toMatchObject({ status: "approved", rejectReason: null });
+  });
+
+  it("reject: in_review→rejected 성공 + extra.reason — rejectReason·reviewerId·reviewedAt 이 반영되고, submittedAt 은 row 그대로 보존된다(F-1 수리)", async () => {
+    const submittedAt = new Date("2026-09-11T00:00:00Z");
+    const row = contentRow({ status: "in_review", submittedAt });
+    const reviewedAt = new Date("2026-09-15T02:00:00Z");
+    const { db, update, updateSetCalls } = createDbMock({
+      contentRows: [row],
+      userRows: [{ id: 7 }],
+      updateReturningResult: [
+        {
+          updatedAt: reviewedAt,
+          submittedAt,
+          reviewerId: 7,
+          reviewedAt,
+          rejectReason: "표현 수정 필요",
+        },
+      ],
+    });
+
+    const result = await transition({ db, ...DEPS }, 1, "reject", { role: "admin" }, { reason: "표현 수정 필요" });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.status).toBe("rejected");
+      expect(result.data.rejectReason).toBe("표현 수정 필요");
+      expect(result.data.reviewerId).toBe(7);
+      expect(result.data.reviewedAt).toBe(reviewedAt.toISOString());
+      expect(result.data.submittedAt).toBe(submittedAt.toISOString());
+    }
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(updateSetCalls[0]).toMatchObject({ status: "rejected", rejectReason: "표현 수정 필요" });
+  });
+
+  it("FORBIDDEN_ROLE — approve 를 role=editor 가 호출하면 거부된다({required:'admin'}), UPDATE 미실행", async () => {
+    const row = contentRow({ status: "in_review" });
+    const { db, update } = createDbMock({ contentRows: [row] });
+
+    const result = await transition({ db, ...DEPS }, 1, "approve", { role: "editor" });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe("FORBIDDEN_ROLE");
+      expect(result.error.details).toEqual({ required: "admin" });
+    }
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("FORBIDDEN_ROLE — reject 를 role=editor 가 호출하면 거부된다({required:'admin'})", async () => {
+    const row = contentRow({ status: "in_review" });
+    const { db, update } = createDbMock({ contentRows: [row] });
+
+    const result = await transition({ db, ...DEPS }, 1, "reject", { role: "editor" }, { reason: "사유" });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe("FORBIDDEN_ROLE");
+      expect(result.error.details).toEqual({ required: "admin" });
+    }
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it.each(["draft", "approved", "rejected", "published"] as const)(
+    "INVALID_TRANSITION — approve 를 status='%s' 인 행에 호출하면 409 다",
+    async (status) => {
+      const row = contentRow({ status });
+      const { db, update } = createDbMock({ contentRows: [row] });
+
+      const result = await transition({ db, ...DEPS }, 1, "approve", { role: "admin" });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.code).toBe("INVALID_TRANSITION");
+        expect(result.error.details).toEqual({ from: status, action: "approve" });
+      }
+      expect(update).not.toHaveBeenCalled();
+    },
+  );
+
+  it("INVALID_TRANSITION — reject 를 in_review 가 아닌 상태(draft)에 호출하면 409 다", async () => {
+    const row = contentRow({ status: "draft" });
+    const { db, update } = createDbMock({ contentRows: [row] });
+
+    const result = await transition({ db, ...DEPS }, 1, "reject", { role: "admin" }, { reason: "사유" });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe("INVALID_TRANSITION");
+      expect(result.error.details).toEqual({ from: "draft", action: "reject" });
+    }
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("INVALID_TRANSITION(동시성 충돌) — approve 의 최종 UPDATE 가 0행을 반환하면 최신 상태로 다시 읽어 그 값 기준 INVALID_TRANSITION 을 반환하고, content_history 에는 아무 것도 쓰지 않는다", async () => {
+    const staleRow = contentRow({ status: "in_review" });
+    const freshRow = contentRow({ status: "rejected" });
+    const { db, update, insert } = createDbMock({
+      contentRows: [staleRow],
+      contentRowsSequence: [[staleRow], [freshRow]],
+      userRows: [{ id: 1 }],
+      updateReturningResult: [],
+    });
+
+    const result = await transition({ db, ...DEPS }, 1, "approve", { role: "admin" });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe("INVALID_TRANSITION");
+      expect(result.error.details).toEqual({ from: "rejected", action: "approve" });
+    }
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  it("approve: admin 시드 유저가 없을 때(resolveActorUserId 가 null 을 반환) → reviewerId:null 로 성공한다(에러 아님)", async () => {
+    const row = contentRow({ status: "in_review" });
+    const { db } = createDbMock({
+      contentRows: [row],
+      userRows: [],
+      updateReturningResult: [
+        {
+          updatedAt: new Date("2026-09-15T03:00:00Z"),
+          submittedAt: row.submittedAt,
+          reviewerId: null,
+          reviewedAt: new Date("2026-09-15T03:00:00Z"),
+          rejectReason: null,
+        },
+      ],
+    });
+
+    const result = await transition({ db, ...DEPS }, 1, "approve", { role: "admin" });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.status).toBe("approved");
+      expect(result.data.reviewerId).toBeNull();
+    }
+  });
+
+  it("approve 성공 시 content_history insert 가 호출되지 않는다(F-3-new)", async () => {
+    const row = contentRow({ status: "in_review" });
+    const { db, insert } = createDbMock({ contentRows: [row], userRows: [{ id: 1 }] });
+
+    const result = await transition({ db, ...DEPS }, 1, "approve", { role: "admin" });
+
+    expect(result.ok).toBe(true);
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  it("reject 성공 시 content_history insert 가 호출되지 않는다(F-3-new — approve 와 대칭)", async () => {
+    const row = contentRow({ status: "in_review" });
+    const { db, insert } = createDbMock({ contentRows: [row], userRows: [{ id: 1 }] });
+
+    const result = await transition({ db, ...DEPS }, 1, "reject", { role: "admin" }, { reason: "사유" });
+
+    expect(result.ok).toBe(true);
+    expect(insert).not.toHaveBeenCalled();
+  });
 });
 
 describe("resolveContentLink", () => {
@@ -690,5 +914,97 @@ describe("getContentDetail", () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.code).toBe("INTERNAL");
+  });
+});
+
+// -----------------------------------------------------------------------------
+// approveContent — FR-010·FR-011(런 20260915-2042-728c) 「유닛 ·
+// approveContent(deps, contentId, actor, registerAsExample)」. transition() 의 approve
+// 경로를 내부에서 타므로 위 승인 성공 테스트와 같은 db 배선(users·brandExamples)을 쓴다.
+// 본문을 800자보다 짧게 유지해(F-3-new 와 무관하게) summary 계산 방식(전체 슬라이스 여부)에
+// 상관없이 summary === row.body 로 단정할 수 있게 한다.
+// -----------------------------------------------------------------------------
+
+describe("approveContent", () => {
+  it("registerAsExample=false → exampleRegistered:false, exampleSkippedReason:null, brandExamples insert 는 호출되지 않는다", async () => {
+    const row = contentRow({ status: "in_review", channelId: 10, lang: "ko" });
+    const { db, insert } = createDbMock({ contentRows: [row], userRows: [{ id: 1 }] });
+
+    const result = await approveContent({ db, ...DEPS }, 1, { role: "admin" }, false);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.status).toBe("approved");
+      expect(result.data.exampleRegistered).toBe(false);
+      expect(result.data.exampleSkippedReason).toBeNull();
+    }
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  it("registerAsExample=true, detectedTerms.warns=[] → brandExamples.insert 호출 인자(contentId·channelId·lang·summary·reason:'admin_approval')가 맞고 exampleRegistered:true 다", async () => {
+    const row = contentRow({
+      status: "in_review",
+      channelId: 10,
+      lang: "ko",
+      body: "짧은 본문",
+      detectedTerms: { blocks: [], warns: [], missing: [] },
+    });
+    const { db, brandExampleInsertCalls } = createDbMock({ contentRows: [row], userRows: [{ id: 1 }] });
+
+    const result = await approveContent({ db, ...DEPS }, 1, { role: "admin" }, true);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.status).toBe("approved");
+      expect(result.data.exampleRegistered).toBe(true);
+      expect(result.data.exampleSkippedReason).toBeNull();
+    }
+    expect(brandExampleInsertCalls).toHaveLength(1);
+    expect(brandExampleInsertCalls[0]).toMatchObject({
+      contentId: 1,
+      channelId: 10,
+      lang: "ko",
+      summary: "짧은 본문",
+      reason: "admin_approval",
+    });
+  });
+
+  it("registerAsExample=true, detectedTerms.warns.length>0 → 승인 전이는 성공하되 exampleRegistered:false, exampleSkippedReason='경고 표현이 있어 예시로 등록하지 않았습니다.', insert 는 호출되지 않는다", async () => {
+    const row = contentRow({
+      status: "in_review",
+      detectedTerms: { blocks: [], warns: [{ matched: "다이어트", rule: 1 }], missing: [] },
+    });
+    const { db, insert } = createDbMock({ contentRows: [row], userRows: [{ id: 1 }] });
+
+    const result = await approveContent({ db, ...DEPS }, 1, { role: "admin" }, true);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.status).toBe("approved");
+      expect(result.data.exampleRegistered).toBe(false);
+      expect(result.data.exampleSkippedReason).toBe("경고 표현이 있어 예시로 등록하지 않았습니다.");
+    }
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  it("brandExamples.insert 가 예외를 던지면 transition() 은 이미 성공했으므로 ok:true 를 유지하고, exampleRegistered:false·exampleSkippedReason='예시 등록 중 오류가 발생했습니다.' 를 반환한다", async () => {
+    const row = contentRow({
+      status: "in_review",
+      detectedTerms: { blocks: [], warns: [], missing: [] },
+    });
+    const { db } = createDbMock({
+      contentRows: [row],
+      userRows: [{ id: 1 }],
+      brandExampleInsertShouldThrow: true,
+    });
+
+    const result = await approveContent({ db, ...DEPS }, 1, { role: "admin" }, true);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.status).toBe("approved");
+      expect(result.data.exampleRegistered).toBe(false);
+      expect(result.data.exampleSkippedReason).toBe("예시 등록 중 오류가 발생했습니다.");
+    }
   });
 });

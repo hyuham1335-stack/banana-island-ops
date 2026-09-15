@@ -191,3 +191,21 @@ export const ContentListQuerySchema = z.object({
 });
 
 export type ContentListQuery = z.infer<typeof ContentListQuerySchema>;
+
+/**
+ * POST /api/contents/{id}/approve 요청 검증 — FR-010 계약(run 20260915-2042-728c).
+ */
+export const ApproveInputSchema = z.object({
+  registerAsExample: z.boolean(),
+});
+
+export type ApproveInput = z.infer<typeof ApproveInputSchema>;
+
+/**
+ * POST /api/contents/{id}/reject 요청 검증 — FR-011 계약(run 20260915-2042-728c).
+ */
+export const RejectInputSchema = z.object({
+  reason: z.string().trim().min(1).max(1000),
+});
+
+export type RejectInput = z.infer<typeof RejectInputSchema>;
