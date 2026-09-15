@@ -80,6 +80,10 @@ export function ContentComposer({
   const [topicMemo, setTopicMemo] = useState(initialTopicMemo);
   const [target, setTarget] = useState<TargetState>({ value: "", dirty: false, auto: "", confirmVisible: false });
   const [gen, setGen] = useState<GenState>({ phase: "idle" });
+  const [reviewAction, setReviewAction] = useState<{ pending: boolean; error: string | null }>({
+    pending: false,
+    error: null,
+  });
 
   function handleChannelChange(id: number) {
     setChannelId(id);
@@ -191,6 +195,34 @@ export function ContentComposer({
     setGen((prev) => (prev.phase === "body" ? { ...prev, ...patch, edited: true } : prev));
   }
 
+  async function runReviewAction(action: "submit" | "cancel-review") {
+    if (gen.phase !== "body") return;
+    setReviewAction({ pending: true, error: null });
+    try {
+      const res = await fetch(`/api/contents/${gen.content.id}/${action}`, { method: "POST" });
+      const json = await res.json();
+      if (!res.ok) {
+        setReviewAction({ pending: false, error: json.error?.message ?? "요청을 처리하지 못했습니다." });
+        return;
+      }
+      const content: ContentDetail = json.data;
+      setGen((prev) =>
+        prev.phase === "body" ? { ...prev, content, draftTitle: content.title, draftBody: content.body ?? "", edited: false } : prev,
+      );
+      setReviewAction({ pending: false, error: null });
+    } catch {
+      setReviewAction({ pending: false, error: "요청을 보내지 못했습니다." });
+    }
+  }
+
+  function submitForReview() {
+    void runReviewAction("submit");
+  }
+
+  function cancelReview() {
+    void runReviewAction("cancel-review");
+  }
+
   const diff = plan !== null && (plan.channelId !== channelId || plan.lang !== lang || plan.productId !== productId);
   const channelName = channels.find((c) => c.id === channelId)?.name ?? "";
   const contextLabel = `${productLabel(products.find((p) => p.id === productId)?.name ?? null)} · ${channelName} · ${
@@ -289,6 +321,9 @@ export function ContentComposer({
           onRetitle={requestTitles}
           onBackToTitles={backToTitles}
           onEditBodyDraft={editBodyDraft}
+          reviewAction={reviewAction}
+          onSubmitReview={submitForReview}
+          onCancelReview={cancelReview}
         />
       </div>
     </>
