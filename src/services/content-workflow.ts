@@ -1,7 +1,7 @@
 import { and, desc, eq, sql } from "drizzle-orm";
 import type { Actor } from "@/lib/auth";
 import type { Db } from "@/lib/db/client";
-import { contentHistory, contents, products, publishPlans, salesChannels, users } from "@/lib/db/schema";
+import { brandExamples, contentHistory, contents, products, publishPlans, salesChannels, users } from "@/lib/db/schema";
 import { toContentDetail, type ContentDetail, type ContentsRow } from "@/lib/content-detail";
 import type { ErrorCode } from "@/lib/http";
 import { buildUtmLink } from "@/lib/utm";
@@ -19,7 +19,7 @@ export type Result<T> =
   | { ok: true; data: T }
   | { ok: false; error: { code: ErrorCode; message: string; details?: unknown } };
 
-export type TransitionAction = "submit" | "cancel_review";
+export type TransitionAction = "submit" | "cancel_review" | "approve" | "reject";
 
 export const TRANSITIONS: Record<
   TransitionAction,
@@ -27,7 +27,22 @@ export const TRANSITIONS: Record<
 > = {
   submit: { from: ["draft", "rejected"], to: "in_review" },
   cancel_review: { from: ["in_review"], to: "draft", requireRole: "editor" },
+  approve: { from: ["in_review"], to: "approved", requireRole: "admin" },
+  reject: { from: ["in_review"], to: "rejected", requireRole: "admin" },
 };
+
+/**
+ * 승인·반려 행위자의 users.id 근사 — listContents 의 mine 필터(155~165행)와 같은 패턴.
+ * FR-015(실사용자 식별)가 아직 없어 role 로 첫 행을 근사한다. 유저가 없으면(시드 전)
+ * null — 예외를 던지지 않는다(계약 「유닛」).
+ */
+async function resolveActorUserId(db: Db, actor: Actor): Promise<number | null> {
+  const userQuery = db.select({ id: users.id }).from(users);
+  userQuery.where(eq(users.role, actor.role));
+  userQuery.limit(1);
+  const userRows = await userQuery;
+  return userRows[0]?.id ?? null;
+}
 
 /**
  * 발행 링크 재계산 — GET 상세·transition() 둘 다 재사용하는 헬퍼(계약 「플랜과의 차이」).
@@ -213,6 +228,7 @@ export async function transition(
   contentId: number,
   action: TransitionAction,
   actor: Actor,
+  extra?: { reason?: string },
 ): Promise<Result<ContentDetail>> {
   try {
     const selectQuery = deps.db.select().from(contents);
@@ -290,24 +306,62 @@ export async function transition(
       }
     }
 
-    // action 별로 .set() 인자 형태가 달라(submit 만 submittedAt·detectedTerms 를 추가) 객체
-    // 리터럴을 그대로 분기해 넘긴다 — 중간 변수(Record<string, unknown>)를 거치면 drizzle 의
-    // 컬럼별 값 타입(SQL 래핑 포함) 추론이 깨진다.
+    let reviewerId: number | null = null;
+    if (action === "approve" || action === "reject") {
+      reviewerId = await resolveActorUserId(deps.db, actor);
+    }
+
+    // action 별로 .set() 인자 형태가 달라(submit 만 submittedAt·detectedTerms 를 추가,
+    // approve/reject 는 reviewerId·reviewedAt·rejectReason 을 추가) 객체 리터럴을 그대로
+    // 분기해 넘긴다 — 중간 변수(Record<string, unknown>)를 거치면 drizzle 의 컬럼별 값
+    // 타입(SQL 래핑 포함) 추론이 깨진다. submittedAt 은 approve/reject 의 .set() 에 넣지
+    // 않는 것 자체가 보존 메커니즘이다(계약 「유닛」).
     // AND status=row.status 가 lost-update 가드다 — content-generation.ts 468~481행의
     // isNull(contents.body) 가드와 같은 역할: 1단계에서 읽은 이후 다른 요청이 먼저 상태를
     // 바꿨다면 이 UPDATE 는 0행을 반환하고, row.status 기준의 결과로 조용히 덮어쓰지 않는다.
+    const returningColumns = {
+      updatedAt: contents.updatedAt,
+      submittedAt: contents.submittedAt,
+      reviewerId: contents.reviewerId,
+      reviewedAt: contents.reviewedAt,
+      rejectReason: contents.rejectReason,
+    };
     const updateQuery =
       action === "submit"
         ? deps.db
             .update(contents)
             .set({ status: rule.to, updatedAt: sql`now()`, submittedAt: sql`now()`, detectedTerms: validation })
             .where(and(eq(contents.id, contentId), eq(contents.status, row.status)))
-            .returning({ updatedAt: contents.updatedAt, submittedAt: contents.submittedAt })
-        : deps.db
-            .update(contents)
-            .set({ status: rule.to, updatedAt: sql`now()`, submittedAt: null })
-            .where(and(eq(contents.id, contentId), eq(contents.status, row.status)))
-            .returning({ updatedAt: contents.updatedAt, submittedAt: contents.submittedAt });
+            .returning(returningColumns)
+        : action === "cancel_review"
+          ? deps.db
+              .update(contents)
+              .set({ status: rule.to, updatedAt: sql`now()`, submittedAt: null })
+              .where(and(eq(contents.id, contentId), eq(contents.status, row.status)))
+              .returning(returningColumns)
+          : action === "approve"
+            ? deps.db
+                .update(contents)
+                .set({
+                  status: rule.to,
+                  updatedAt: sql`now()`,
+                  reviewerId,
+                  reviewedAt: sql`now()`,
+                  rejectReason: null,
+                })
+                .where(and(eq(contents.id, contentId), eq(contents.status, row.status)))
+                .returning(returningColumns)
+            : deps.db
+                .update(contents)
+                .set({
+                  status: rule.to,
+                  updatedAt: sql`now()`,
+                  reviewerId,
+                  reviewedAt: sql`now()`,
+                  rejectReason: extra?.reason ?? null,
+                })
+                .where(and(eq(contents.id, contentId), eq(contents.status, row.status)))
+                .returning(returningColumns);
     const updatedRows = await updateQuery;
     const updated = updatedRows[0];
 
@@ -365,8 +419,17 @@ export async function transition(
       ...row,
       status: rule.to,
       updatedAt: updated?.updatedAt ?? row.updatedAt,
-      submittedAt: action === "submit" ? (updated?.submittedAt ?? row.submittedAt) : null,
+      submittedAt:
+        action === "submit"
+          ? (updated?.submittedAt ?? row.submittedAt)
+          : action === "cancel_review"
+            ? null
+            : row.submittedAt,
       detectedTerms: action === "submit" ? validation : row.detectedTerms,
+      reviewerId: action === "approve" || action === "reject" ? (updated?.reviewerId ?? null) : row.reviewerId,
+      reviewedAt: action === "approve" || action === "reject" ? (updated?.reviewedAt ?? null) : row.reviewedAt,
+      rejectReason:
+        action === "reject" ? (extra?.reason ?? null) : action === "approve" ? null : row.rejectReason,
     };
 
     const data = toContentDetail(updatedRow, {
@@ -388,5 +451,68 @@ export async function transition(
       }),
     );
     return { ok: false, error: { code: "INTERNAL", message: "상태 전이 중 오류가 발생했습니다." } };
+  }
+}
+
+export interface ApproveResult extends ContentDetail {
+  exampleRegistered: boolean;
+  exampleSkippedReason: string | null;
+}
+
+/**
+ * FR-010 승인 — 계약(run 20260915-2042-728c) 「유닛 · approveContent」.
+ * transition() 으로 상태만 바꾸고, 이 함수는 승인 후 브랜드 예시 등록(선택) 만 얹는다.
+ * brandExamples insert 실패는 승인 자체를 무효화하지 않는다 — try/catch 로 감싸
+ * exampleSkippedReason 으로만 알린다(파일 상단 "서비스는 throw 하지 않는다" 불변식).
+ */
+export async function approveContent(
+  deps: { db: Db; productBaseUrl: string },
+  contentId: number,
+  actor: Actor,
+  registerAsExample: boolean,
+): Promise<Result<ApproveResult>> {
+  const result = await transition(deps, contentId, "approve", actor);
+  if (!result.ok) return result;
+
+  if (!registerAsExample) {
+    return { ok: true, data: { ...result.data, exampleRegistered: false, exampleSkippedReason: null } };
+  }
+
+  if (result.data.validation.warns.length > 0) {
+    return {
+      ok: true,
+      data: {
+        ...result.data,
+        exampleRegistered: false,
+        exampleSkippedReason: "경고 표현이 있어 예시로 등록하지 않았습니다.",
+      },
+    };
+  }
+
+  try {
+    await deps.db.insert(brandExamples).values({
+      contentId,
+      channelId: result.data.channelId,
+      lang: result.data.lang,
+      summary: (result.data.body ?? "").slice(0, 800),
+      reason: "admin_approval",
+    });
+    return { ok: true, data: { ...result.data, exampleRegistered: true, exampleSkippedReason: null } };
+  } catch (err) {
+    console.error(
+      JSON.stringify({
+        event: "brand_example_register_failed",
+        contentId,
+        message: err instanceof Error ? err.message : String(err),
+      }),
+    );
+    return {
+      ok: true,
+      data: {
+        ...result.data,
+        exampleRegistered: false,
+        exampleSkippedReason: "예시 등록 중 오류가 발생했습니다.",
+      },
+    };
   }
 }
