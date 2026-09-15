@@ -30,6 +30,19 @@ describe("parseEnv", () => {
     expect(env.DATABASE_URL).toBe(REQUIRED.DATABASE_URL);
     expect(env.LLM_MODEL).toBe("claude-sonnet-5");
     for (const k of OPTIONAL_KEYS) expect(env[k]).toBeUndefined();
+    expect(env.NODE_ENV).toBeUndefined();
+  });
+
+  it("(h) NODE_ENV 는 선택값이라 주어지면 그대로 통과한다(계약 — /api/role 이 getEnv().NODE_ENV 로 secure 플래그를 정함)", async () => {
+    const { parseEnv } = await import("./env");
+    const env = parseEnv({ ...REQUIRED, NODE_ENV: "production" });
+    expect(env.NODE_ENV).toBe("production");
+  });
+
+  it("(h) NODE_ENV 가 빈 문자열·공백이면 다른 선택 키와 같이 누락으로 취급해 undefined 가 된다", async () => {
+    const { parseEnv } = await import("./env");
+    expect(parseEnv({ ...REQUIRED, NODE_ENV: "" }).NODE_ENV).toBeUndefined();
+    expect(parseEnv({ ...REQUIRED, NODE_ENV: "   " }).NODE_ENV).toBeUndefined();
   });
 
   it.each(Object.keys(REQUIRED))("(b) 필수 %s 가 없으면 throw 하고 메시지에 그 키 이름이 있다", async (key) => {

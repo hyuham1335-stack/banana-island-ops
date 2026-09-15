@@ -3,6 +3,7 @@ import {
   ApproveInputSchema,
   ContentListQuerySchema,
   RejectInputSchema,
+  SetRoleInputSchema,
   SheetPlanRowSchema,
   parseSheetRow,
 } from "./schemas";
@@ -268,5 +269,29 @@ describe("RejectInputSchema", () => {
 
   it("reason 필드가 없으면 거부한다", () => {
     expect(RejectInputSchema.safeParse({}).success).toBe(false);
+  });
+});
+
+// 계약: FR-010/011 프론트 연결 + 역할 전환(런 20260916-0038-3305)
+// 「데이터 형태 · SetRoleInput { role: "editor" | "admin" }」
+describe("SetRoleInputSchema", () => {
+  it("role:'editor' 는 통과한다", () => {
+    const result = SetRoleInputSchema.safeParse({ role: "editor" });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data).toEqual({ role: "editor" });
+  });
+
+  it("role:'admin' 은 통과한다", () => {
+    const result = SetRoleInputSchema.safeParse({ role: "admin" });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data).toEqual({ role: "admin" });
+  });
+
+  it("role 이 유효 집합(editor|admin) 밖의 다른 문자열이면 거부한다", () => {
+    expect(SetRoleInputSchema.safeParse({ role: "superuser" }).success).toBe(false);
+  });
+
+  it("role 필드가 없으면 거부한다", () => {
+    expect(SetRoleInputSchema.safeParse({}).success).toBe(false);
   });
 });

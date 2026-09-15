@@ -1,4 +1,5 @@
 import type { ContentDetail } from "@/lib/content-detail";
+import type { Actor } from "@/lib/auth";
 import { POST_TYPE_LABELS, productLabel } from "@/components/plan-format";
 import { ContentTag } from "@/components/contents/ContentTag";
 import { ContentActions } from "@/components/contents/ContentActions";
@@ -22,10 +23,12 @@ export function ContentDetailPanel({
   content,
   channelName,
   productName,
+  actorRole,
 }: {
   content: ContentDetail;
   channelName: string;
   productName: string | null;
+  actorRole: Actor["role"];
 }) {
   return (
     <div className="panel">
@@ -67,7 +70,13 @@ export function ContentDetailPanel({
           </details>
         ) : null}
 
-        <ContentActions contentId={content.id} status={content.status} />
+        <ContentActions
+          key={content.id}
+          contentId={content.id}
+          status={content.status}
+          actorRole={actorRole}
+          hasWarnings={content.validation.warns.length > 0}
+        />
       </div>
     </div>
   );

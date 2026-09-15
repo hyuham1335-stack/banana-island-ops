@@ -193,6 +193,15 @@ export const ContentListQuerySchema = z.object({
 export type ContentListQuery = z.infer<typeof ContentListQuerySchema>;
 
 /**
+ * POST /api/role 요청 검증 — 계약(run 20260916-0038-3305).
+ */
+export const SetRoleInputSchema = z.object({
+  role: z.enum(["editor", "admin"]),
+});
+
+export type SetRoleInput = z.infer<typeof SetRoleInputSchema>;
+
+/**
  * POST /api/contents/{id}/approve 요청 검증 — FR-010 계약(run 20260915-2042-728c).
  */
 export const ApproveInputSchema = z.object({

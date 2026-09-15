@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
+import { getServerActor } from "@/lib/auth";
 import { Nav } from "@/components/shell/Nav";
 import { Topbar } from "@/components/shell/Topbar";
 import "./globals.css";
@@ -9,7 +10,9 @@ export const metadata: Metadata = {
   description: "다국어 콘텐츠 · 광고 성과 · 3국 원가손익 운영 도구",
 };
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export default async function RootLayout({ children }: { children: ReactNode }) {
+  const { role } = await getServerActor();
+
   return (
     <html lang="ko">
       <head>
@@ -20,9 +23,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         />
       </head>
       <body>
-        <Topbar />
+        <Topbar role={role} />
         <div className="shell">
-          <Nav />
+          <Nav role={role} />
           <main className="main">{children}</main>
         </div>
       </body>

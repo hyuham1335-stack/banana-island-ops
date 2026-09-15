@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getDb } from "@/lib/db/client";
 import { getEnv } from "@/lib/env";
+import { getServerActor } from "@/lib/auth";
 import { getContentDetail, listContents } from "@/services/content-workflow";
 import { listActiveProducts, listContentChannels } from "@/services/content-options";
 import { ContentList } from "@/components/contents/ContentList";
@@ -15,6 +16,7 @@ export default async function ContentDetailPage({ params }: { params: Promise<{ 
   const id = Number(idParam);
 
   const db = getDb();
+  const viewerActor = await getServerActor();
   const [channels, products] = await Promise.all([listContentChannels({ db }), listActiveProducts({ db })]);
   const channelNames = Object.fromEntries(channels.map((c) => [c.id, c.name]));
 
@@ -74,6 +76,7 @@ export default async function ContentDetailPage({ params }: { params: Promise<{ 
             content={result.data}
             channelName={channelNames[result.data.channelId] ?? ""}
             productName={products.find((p) => p.id === result.data.productId)?.name ?? null}
+            actorRole={viewerActor.role}
           />
         ) : (
           <Notice variant="bad">{result.error.message}</Notice>
