@@ -21,6 +21,9 @@ export function GenPanel({
   onRetitle,
   onBackToTitles,
   onEditBodyDraft,
+  reviewAction,
+  onSubmitReview,
+  onCancelReview,
 }: {
   gen: GenState;
   contextLabel: string;
@@ -30,12 +33,16 @@ export function GenPanel({
   onRetitle: () => void;
   onBackToTitles: () => void;
   onEditBodyDraft: (patch: Partial<{ title: string; body: string }>) => void;
+  reviewAction: { pending: boolean; error: string | null };
+  onSubmitReview: () => void;
+  onCancelReview: () => void;
 }) {
   const [copied, setCopied] = useState(false);
 
   const step1On =
     gen.phase === "idle" || gen.phase === "titles-loading" || gen.phase === "titles-error" || gen.phase === "titles";
   const step2On = gen.phase === "body-loading" || gen.phase === "body-error" || gen.phase === "body";
+  const step3On = gen.phase === "body" && gen.content.status === "in_review";
 
   return (
     <div className="panel">
@@ -43,10 +50,10 @@ export function GenPanel({
         <div className={`step${step1On ? " on" : step2On ? " done" : ""}`}>
           <i>1</i>제목 3안
         </div>
-        <div className={`step${step2On ? " on" : ""}`}>
+        <div className={`step${step2On && !step3On ? " on" : step3On ? " done" : ""}`}>
           <i>2</i>본문 초안
         </div>
-        <div className="step">
+        <div className={`step${step3On ? " on" : ""}`}>
           <i>3</i>검수 요청
         </div>
       </div>
@@ -182,14 +189,30 @@ export function GenPanel({
             <Checks validation={gen.content.validation} />
             <div className="utm">
               <UtmBox link={gen.content.link} />
+
+              {gen.content.status === "in_review" ? (
+                <Notice variant="warn">검수 대기 중입니다. 담당자가 처리하기 전까지 취소할 수 있습니다.</Notice>
+              ) : null}
+
+              {reviewAction.error ? <Notice variant="bad">{reviewAction.error}</Notice> : null}
+
               <div className="btn-row" style={{ marginBottom: 10 }}>
-                <Button
-                  small
-                  disabled
-                  disabledReason="검수 워크플로는 다음 단계에서 연결됩니다"
-                >
-                  검수 요청
-                </Button>
+                {gen.content.status === "in_review" ? (
+                  <Button variant="ghost" small onClick={onCancelReview} disabled={reviewAction.pending}>
+                    검수 요청 취소
+                  </Button>
+                ) : (
+                  <Button
+                    small
+                    onClick={onSubmitReview}
+                    disabled={reviewAction.pending || gen.content.validation.blocks.length > 0}
+                    disabledReason={
+                      gen.content.validation.blocks.length > 0 ? "차단 표현이 남아 있어 검수 요청을 보낼 수 없습니다" : undefined
+                    }
+                  >
+                    검수 요청
+                  </Button>
+                )}
                 <Button variant="ghost" small disabled disabledReason="다음 단계에서 연결됩니다">
                   다시 만들기
                 </Button>

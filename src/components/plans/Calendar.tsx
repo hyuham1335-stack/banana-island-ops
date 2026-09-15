@@ -118,8 +118,11 @@ function CalendarEvent({ plan }: { plan: PlanEvent }) {
   );
 
   if (plan.contentId !== null) {
-    // 이미 콘텐츠가 있는 계획 — /contents/[id] 가 아직 없어 링크 없이 표시만 한다.
-    return <div className={`ev s-${plan.status}`}>{content}</div>;
+    return (
+      <Link href={`/contents/${plan.contentId}`} className={`ev s-${plan.status}`}>
+        {content}
+      </Link>
+    );
   }
 
   const params = new URLSearchParams({
