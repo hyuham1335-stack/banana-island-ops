@@ -119,3 +119,37 @@ export const RulesResolveQuerySchema = z.object({
   lang: z.enum(["ko", "en"]),
   productId: z.coerce.number().int().positive().optional(),
 });
+
+/**
+ * POST /api/contents/titles 요청·LLM 출력 검증 — docs/API_SPEC.md 136~140행(FR-004 계약).
+ * `TitleRequest` 는 요청 본문(신뢰 경계), `LlmTitleItemSchema`·`LlmTitleCandidatesSchema` 는
+ * LLM 이 낸 JSON 출력(마찬가지로 신뢰 경계) — 둘 다 이 zod 를 통과한 뒤에만 쓴다.
+ */
+export const TitleRequestSchema = z.object({
+  productId: z.number().int().positive().nullable(),
+  channelId: z.number().int().positive(),
+  lang: z.enum(["ko", "en"]),
+  postType: z.enum(["health_info", "activity_news", "comparison", "review"]),
+  // 상한 500자 — 사람이 쓰는 주제 메모·타깃 서술로 넉넉한 값. 역할 검사가 없는 라우트라
+  // 여기서 길이를 막지 않으면 매 호출 유료 Anthropic 호출(최대 20초+28초)의 입력이 무한정 커진다.
+  topicMemo: z.string().trim().max(500),
+  targetPersona: z.string().trim().max(500),
+});
+
+export type TitleRequest = z.infer<typeof TitleRequestSchema>;
+
+// title/angle 상한 — 프롬프트 인젝션으로 시스템 프롬프트 전문(브랜드 규칙)이 그대로
+// 반환되는 경로를 좁힌다. 실제 제목·앵글 길이에 맞춘 여유값이다.
+export const LlmTitleItemSchema = z.object({
+  title: z.string().trim().min(1).max(100),
+  angle: z.string().trim().min(1).max(200),
+});
+
+export type LlmTitleItem = z.infer<typeof LlmTitleItemSchema>;
+
+// 항상 3안 — API_SPEC.md 「TitleCandidates」의 items[3] 을 튜플로 강제한다.
+export const LlmTitleCandidatesSchema = z.object({
+  items: z.tuple([LlmTitleItemSchema, LlmTitleItemSchema, LlmTitleItemSchema]),
+});
+
+export type LlmTitleCandidates = z.infer<typeof LlmTitleCandidatesSchema>;
