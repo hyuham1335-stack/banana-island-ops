@@ -56,6 +56,7 @@ const CONTENT_DETAIL = {
   isExample: false,
   historyCount: 2,
   autoRegenerated: false,
+  channelFormat: null,
 };
 
 function reqFor(id: string): { request: Request; ctx: { params: Promise<{ id: string }> } } {

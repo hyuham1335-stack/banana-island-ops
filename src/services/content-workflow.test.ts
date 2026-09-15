@@ -89,6 +89,10 @@ interface ChannelRow {
   utmSource: string | null;
   utmMedium: string | null;
   linkPolicy: "inline" | "bio" | "none";
+  // FR-012(채널 형식 변환) 계약 — resolveChannelFormat 이 같은 salesChannels 테이블에서
+  // 함께 SELECT 하는 컬럼. 기존 resolveContentLink 케이스들은 이 값을 보지 않으므로
+  // 기본값(null)을 둬도 영향이 없다.
+  writeUrl?: string | null;
 }
 
 interface ProductRow {
@@ -136,6 +140,7 @@ const CHANNEL_ROW: ChannelRow = {
   utmSource: "kakao",
   utmMedium: "sns",
   linkPolicy: "inline",
+  writeUrl: null,
 };
 
 const DEFAULT_RETURNING_ROW = {
@@ -915,6 +920,56 @@ describe("getContentDetail", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.code).toBe("INTERNAL");
   });
+
+  // ---------------------------------------------------------------------------
+  // channelFormat — FR-012(채널 형식 변환) 계약 「유닛 · getContentDetail」: status가
+  // approved 일 때만 resolveChannelFormat 을 호출해 채운다. 그 외 상태는 null.
+  // ---------------------------------------------------------------------------
+
+  it("status='approved' 면 channelFormat 을 계산해 채운다(linkPolicy='inline' — link 가 본문 끝에 붙는다)", async () => {
+    const row = contentRow({ id: 501, status: "approved", channelId: 10, productId: null, body: "승인된 본문입니다." });
+    const { db } = createDbMock({
+      contentRows: [row],
+      channelRows: [{ ...CHANNEL_ROW, writeUrl: "https://blog.naver.com/write" }],
+      historyCountRows: [{ count: 2 }],
+    });
+
+    const result = await getContentDetail({ db, ...DEPS }, 501);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.channelFormat).not.toBeNull();
+      expect(result.data.channelFormat?.body).toBe(`${row.body}\n\n${result.data.link}`);
+      expect(result.data.channelFormat?.hashtags).toEqual([]);
+      expect(result.data.channelFormat?.writeUrl).toBe("https://blog.naver.com/write");
+    }
+  });
+
+  it.each(["draft", "in_review", "rejected", "published"] as const)(
+    "status='%s' 면(approved 가 아니면) channelFormat 은 null 이다",
+    async (status) => {
+      const row = contentRow({ id: 501, status, channelId: 10 });
+      const { db } = createDbMock({ contentRows: [row], channelRows: [CHANNEL_ROW] });
+
+      const result = await getContentDetail({ db, ...DEPS }, 501);
+
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.data.channelFormat).toBeNull();
+    },
+  );
+
+  it("status='approved' 인데 채널을 찾을 수 없으면(방어적 케이스) channelFormat 은 null 이고 전체 요청은 계속 성공한다", async () => {
+    const row = contentRow({ id: 501, status: "approved", channelId: 999 });
+    const { db } = createDbMock({ contentRows: [row], channelRows: [] });
+
+    const result = await getContentDetail({ db, ...DEPS }, 501);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.channelFormat).toBeNull();
+      expect(result.data.link).toBe(""); // resolveContentLink 도 같은 방어적 응답
+    }
+  });
 });
 
 // -----------------------------------------------------------------------------
@@ -1005,6 +1060,26 @@ describe("approveContent", () => {
       expect(result.data.status).toBe("approved");
       expect(result.data.exampleRegistered).toBe(false);
       expect(result.data.exampleSkippedReason).toBe("예시 등록 중 오류가 발생했습니다.");
+    }
+  });
+
+  // FR-012(채널 형식 변환) 계약 「유닛 · approveContent」: transition() 이 성공(approved 로
+  // 전이)하면 같은 방식으로 channelFormat 을 계산해 ApproveResult 에 포함한다.
+  it("승인 성공 시 응답에 channelFormat 이 포함된다(F-012)", async () => {
+    const row = contentRow({ status: "in_review", channelId: 10, lang: "ko", body: "짧은 본문" });
+    const { db } = createDbMock({
+      contentRows: [row],
+      userRows: [{ id: 1 }],
+      channelRows: [{ ...CHANNEL_ROW, writeUrl: "https://blog.naver.com/write" }],
+    });
+
+    const result = await approveContent({ db, ...DEPS }, 1, { role: "admin" }, false);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.status).toBe("approved");
+      expect(result.data.channelFormat).not.toBeNull();
+      expect(result.data.channelFormat?.writeUrl).toBe("https://blog.naver.com/write");
     }
   });
 });

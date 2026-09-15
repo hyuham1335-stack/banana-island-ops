@@ -87,6 +87,7 @@ const validContentDetail: ContentDetail = {
   isExample: false,
   historyCount: 0,
   autoRegenerated: false,
+  channelFormat: null,
 };
 
 function reqWith(body: unknown): Request {

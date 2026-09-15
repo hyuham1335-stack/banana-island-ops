@@ -58,6 +58,7 @@ const REJECT_RESULT = {
   isExample: false,
   historyCount: 1,
   autoRegenerated: false,
+  channelFormat: null,
 };
 
 function reqFor(id: string, body: unknown): { request: Request; ctx: { params: Promise<{ id: string }> } } {

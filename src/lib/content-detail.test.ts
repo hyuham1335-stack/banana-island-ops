@@ -46,6 +46,7 @@ const EXTRA = {
   isExample: false,
   historyCount: 0,
   autoRegenerated: false,
+  channelFormat: null,
 };
 
 describe("toContentDetail", () => {
@@ -84,6 +85,7 @@ describe("toContentDetail", () => {
       isExample: false,
       historyCount: 0,
       autoRegenerated: false,
+      channelFormat: null,
     });
   });
 
