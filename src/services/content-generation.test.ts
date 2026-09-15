@@ -32,9 +32,15 @@ import { generateTitles } from "./content-generation";
 // 이 파일에서 다시 선언한다).
 // ---------------------------------------------------------------------------
 
-function makeChainNode(resolvedValue: unknown) {
+// delayMs > 0 이면 resolve 직전에 vi.advanceTimersByTime 으로 지연을 흉내 낸다 — 아래
+// timedResolve(LLM 목)와 동일한 기법이다. resolveRules 는 이 DB 조회를 await 하므로,
+// 이 지연은 곧 resolveRules 자체가 그만큼의 시간을 소모한 것으로 관측된다.
+function makeChainNode(resolvedValue: unknown, delayMs = 0) {
   const node: Record<string, unknown> = {
-    then: (resolve: (v: unknown) => void) => resolve(resolvedValue),
+    then: (resolve: (v: unknown) => void) => {
+      if (delayMs > 0) vi.advanceTimersByTime(delayMs);
+      resolve(resolvedValue);
+    },
     catch: () => node,
   };
   return new Proxy(node, {
@@ -51,10 +57,17 @@ interface ChannelRow {
   country: string;
 }
 
-function createDbMock(opts: { channelRows: ChannelRow[]; ruleRows: BrandRuleRow[] }) {
+function createDbMock(opts: {
+  channelRows: ChannelRow[];
+  ruleRows: BrandRuleRow[];
+  // resolveRules 전체(채널 조회 → brand_rules 조회, 순차)가 소모하는 시간을 흉내 낸다.
+  // 첫 쿼리(salesChannels)의 resolve 지점에 몰아서 지연을 건다 — 두 조회가 순차이므로
+  // resolveRules 완료 시점의 총 경과시간은 지연을 어느 쪽에 걸든 동일하다.
+  resolveRulesDelayMs?: number;
+}) {
   const select = vi.fn(() => ({
     from: vi.fn((table: unknown) => {
-      if (table === schema.salesChannels) return makeChainNode(opts.channelRows);
+      if (table === schema.salesChannels) return makeChainNode(opts.channelRows, opts.resolveRulesDelayMs ?? 0);
       if (table === schema.brandRules) return makeChainNode(opts.ruleRows);
       throw new Error("unexpected select().from() table in test mock");
     }),
@@ -317,5 +330,72 @@ describe("generateTitles", () => {
       { db },
       { channelId: baseInput.channelId, lang: baseInput.lang, productId: undefined },
     );
+  });
+
+  // 계약: PR #7(FR-004) Major 3건 수리 — 경과시간 측정 시작점을 resolveRules 호출 전으로
+  // 옮기고, remainingForInitial = TITLE_TOTAL_BUDGET_MS - (그 시점까지의 경과시간) 을
+  // 1차 generateJson 의 timeoutMs 계산에 반영한다.
+
+  it("resolveRules 가 26_000ms 를 소모하면 재생성이 예산 부족(remaining=2_000<3_000)으로 스킵되고 원래 값을 유지한다", async () => {
+    const { db } = createDbMock({
+      channelRows: [{ id: 10, country: "KR" }],
+      ruleRows: [CURE_BAN_RULE],
+      resolveRulesDelayMs: 26_000,
+    });
+    const blockedItem = { title: "당뇨 완치 프로젝트", angle: "앵글2" };
+    const items = [{ title: "제목1", angle: "앵글1" }, blockedItem, { title: "제목3", angle: "앵글3" }];
+    const generateJson = vi.fn().mockImplementation(timedResolve(0, { items }));
+    const llm = { generateJson };
+
+    const result = await generateTitles({ db, llm }, baseInput);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.items[1]).toEqual(blockedItem); // 원래 값 그대로
+      expect(result.data.regeneratedIdx).toEqual([]);
+    }
+    // resolveRules 가 이미 26_000ms 를 소모했으므로 1차 호출은 일어나되(remaining=2_000>0),
+    // 재생성은 예산 부족(2_000<MIN_REGEN_BUDGET_MS)으로 시도되지 않는다 — 1차 호출 1회만.
+    expect(generateJson).toHaveBeenCalledTimes(1);
+  });
+
+  it("resolveRules 가 12_000ms 를 소모하면 1차 generateJson 의 timeoutMs 는 min(20_000, 28_000-12_000)=16_000 이다", async () => {
+    const { db } = createDbMock({
+      channelRows: [{ id: 10, country: "KR" }],
+      ruleRows: [],
+      resolveRulesDelayMs: 12_000,
+    });
+    const items = [
+      { title: "제목1", angle: "앵글1" },
+      { title: "제목2", angle: "앵글2" },
+      { title: "제목3", angle: "앵글3" },
+    ];
+    const generateJson = vi.fn().mockImplementation(timedResolve(0, { items }));
+    const llm = { generateJson };
+
+    const result = await generateTitles({ db, llm }, baseInput);
+
+    expect(result.ok).toBe(true);
+    expect(generateJson).toHaveBeenCalledTimes(1);
+    const [, , , timeoutMs] = generateJson.mock.calls[0];
+    expect(timeoutMs).toBe(16_000);
+  });
+
+  it("resolveRules 가 28_000ms 이상을 소모하면 generateJson 을 한 번도 호출하지 않고 즉시 LLM_TIMEOUT 을 반환한다", async () => {
+    const { db } = createDbMock({
+      channelRows: [{ id: 10, country: "KR" }],
+      ruleRows: [],
+      resolveRulesDelayMs: 29_000,
+    });
+    const generateJson = vi.fn();
+    const llm = { generateJson };
+
+    const result = await generateTitles({ db, llm }, baseInput);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe("LLM_TIMEOUT");
+    }
+    expect(generateJson).not.toHaveBeenCalled();
   });
 });

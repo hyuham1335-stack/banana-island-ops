@@ -76,14 +76,81 @@ async function callOnce(
   }
 }
 
+// 코드펜스(```json ... ``` 또는 ``` ... ```)가 있으면 첫 블록의 내부 텍스트를 뽑는다. non-greedy.
+function extractCodeFence(text: string): string | undefined {
+  const match = text.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
+  return match ? match[1] : undefined;
+}
+
+// 문자열 리터럴 내부의 중괄호를 세지 않는 균형 매칭 — 첫 여는 중괄호부터 그것과 짝이 맞는
+// 닫는 중괄호까지를 잘라낸다. 이스케이프된 따옴표(\")는 문자열 종료로 오인하지 않는다.
+function extractBalancedObject(text: string): string | undefined {
+  const start = text.indexOf("{");
+  if (start === -1) return undefined;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === "{") {
+      depth++;
+    } else if (ch === "}") {
+      depth--;
+      if (depth === 0) {
+        return text.slice(start, i + 1);
+      }
+    }
+  }
+
+  return undefined;
+}
+
 function parseJson(text: string): unknown {
+  const fenced = extractCodeFence(text);
+
+  if (fenced !== undefined) {
+    try {
+      return JSON.parse(fenced);
+    } catch {
+      const balanced = extractBalancedObject(fenced);
+      if (balanced !== undefined) {
+        try {
+          return JSON.parse(balanced);
+        } catch {
+          // 펜스 내부에서도 실패 — 원본 전체로 마지막 시도.
+        }
+      }
+    }
+
+    const balancedFromWhole = extractBalancedObject(text);
+    if (balancedFromWhole !== undefined) {
+      return JSON.parse(balancedFromWhole);
+    }
+    throw new Error("응답에서 JSON 객체를 찾을 수 없습니다.");
+  }
+
   try {
     return JSON.parse(text);
   } catch {
-    // 코드펜스·설명 문구가 섞여 왔을 때를 대비해 첫 JSON 객체만 뽑아 재시도한다.
-    const match = text.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error("응답에서 JSON 객체를 찾을 수 없습니다.");
-    return JSON.parse(match[0]);
+    const balanced = extractBalancedObject(text);
+    if (!balanced) throw new Error("응답에서 JSON 객체를 찾을 수 없습니다.");
+    return JSON.parse(balanced);
   }
 }
 

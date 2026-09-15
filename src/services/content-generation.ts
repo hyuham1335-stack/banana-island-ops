@@ -35,6 +35,10 @@ export async function generateTitles(
   deps: { db: Db; llm: LlmClient },
   input: TitleRequest,
 ): Promise<Result<TitleCandidates>> {
+  // 경과시간 측정은 resolveRules 호출 전부터 시작한다 — DB 조회도 TITLE_TOTAL_BUDGET_MS 예산을
+  // 갉아먹으므로, 1차 LLM 호출의 timeoutMs 계산에 그 시간이 반영돼야 한다.
+  const startedAt = Date.now();
+
   // 1. 규칙 병합 조회 — 실패(NOT_FOUND 등)는 그대로 전파한다.
   const rulesResult = await resolveRules(
     { db: deps.db },
@@ -48,12 +52,22 @@ export async function generateTitles(
   const system = buildTitlesSystemPrompt(rules);
   const user = buildTitlesUserPrompt(input);
 
-  // 2. 1차 LLM 호출 — 이 호출은 항상 INITIAL_TIMEOUT_MS(20초) 이내에 확정된다(client.ts 의
-  // deadline 의미론). 여기서 던져진 예외만 전체 요청 실패로 매핑한다.
-  const startedAt = Date.now();
+  // 2. 1차 LLM 호출 — resolveRules 로 이미 소진된 시간을 뺀 나머지만 이 호출의 예산으로 쓴다.
+  // 남은 예산이 없으면 호출 자체를 생략하고 타임아웃으로 즉시 반환한다.
+  const remainingForInitial = TITLE_TOTAL_BUDGET_MS - (Date.now() - startedAt);
+  if (remainingForInitial <= 0) {
+    return { ok: false, error: { code: "LLM_TIMEOUT", message: "제목 생성이 시간 초과되었습니다." } };
+  }
+
   let candidates: { items: LlmTitleItem[] };
   try {
-    candidates = await deps.llm.generateJson(system, user, LlmTitleCandidatesSchema, INITIAL_TIMEOUT_MS, "titles");
+    candidates = await deps.llm.generateJson(
+      system,
+      user,
+      LlmTitleCandidatesSchema,
+      Math.min(INITIAL_TIMEOUT_MS, remainingForInitial),
+      "titles",
+    );
   } catch (err) {
     if (err instanceof LlmTimeoutError) {
       return { ok: false, error: { code: "LLM_TIMEOUT", message: "제목 생성이 시간 초과되었습니다." } };
