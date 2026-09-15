@@ -1,0 +1,1 @@
+ALTER TABLE "contents" ADD COLUMN "post_type" "post_type" NOT NULL;

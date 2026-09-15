@@ -153,3 +153,30 @@ export const LlmTitleCandidatesSchema = z.object({
 });
 
 export type LlmTitleCandidates = z.infer<typeof LlmTitleCandidatesSchema>;
+
+/**
+ * POST /api/contents 요청·LLM 출력 검증 — FR-005 계약(_workspace/contract_fr-005-body-generation.md).
+ * `title`·`angle` 상한은 `LlmTitleItemSchema`(100·200)보다 여유를 둔다 — 화면에서 사용자가
+ * 3안 중 하나를 고르거나 직접 편집해 넘어올 수 있기 때문이다.
+ */
+export const CreateContentInputSchema = z.object({
+  publishPlanId: z.number().int().positive().nullable(),
+  productId: z.number().int().positive().nullable(),
+  channelId: z.number().int().positive(),
+  lang: z.enum(["ko", "en"]),
+  postType: z.enum(["health_info", "activity_news", "comparison", "review"]),
+  topicMemo: z.string().trim().max(500),
+  targetPersona: z.string().trim().max(500),
+  title: z.string().trim().min(1).max(200),
+  angle: z.string().trim().min(1).max(300),
+  titleCandidates: z.tuple([LlmTitleItemSchema, LlmTitleItemSchema, LlmTitleItemSchema]),
+});
+
+export type CreateContentInput = z.infer<typeof CreateContentInputSchema>;
+
+// LLM 이 낸 본문 JSON 출력 — 신뢰 경계. 상한 12,000자는 TRD 의 본문 길이 가드레일.
+export const LlmBodyDraftSchema = z.object({
+  body: z.string().trim().min(1).max(12_000),
+});
+
+export type LlmBodyDraft = z.infer<typeof LlmBodyDraftSchema>;
