@@ -1191,6 +1191,25 @@ describe("createContentWithBody", () => {
     expect(updateSetCalls[0]).toMatchObject({ sentPrompt: expectedSentPrompt });
   });
 
+  it("system 프롬프트는 본문 출력 형식({ body })을 지시하고, 제목 생성용 items 형식을 지시하지 않는다(07 코드리뷰: LlmBodyDraftSchema 와 system 이 지시하는 형식이 모순되면 실제 LLM 호출에서 스키마 불일치로 매번 실패한다)", async () => {
+    const { db } = createBodyDbMock({
+      channelRows: [CHANNEL_ROW],
+      ruleRows: [],
+      templateQueue: [[TEMPLATE_ROW]],
+      exampleRows: [],
+      insertResult: [{ id: 517, createdAt: new Date(), updatedAt: new Date() }],
+      updateQueue: [[{ updatedAt: new Date() }]],
+    });
+    const generateJson = vi.fn().mockImplementation(timedResolve(0, { body: "본문" }));
+    const llm = { generateJson };
+
+    await createContentWithBody({ db, llm, productBaseUrl: "https://shop.banana-island.co.kr", model: "claude-test-model" }, baseBodyInput);
+
+    const [system] = generateJson.mock.calls[0];
+    expect(system).toContain('출력 형식: { "body": string }.');
+    expect(system).not.toContain("items");
+  });
+
   it("linkPolicy='none' 이면 렌더링된 템플릿에 실제 링크 대신 빈 문자열이 들어간다", async () => {
     const noneChannel: ChannelDetailRow = { ...CHANNEL_ROW, linkPolicy: "none" };
     const { db } = createBodyDbMock({

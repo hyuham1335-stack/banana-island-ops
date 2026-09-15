@@ -4,6 +4,7 @@ import type { Finding } from "@/lib/validator";
 import type { ResolvedRules } from "@/lib/rules-merge";
 import {
   buildBodyRegenPrompt,
+  buildBodySystemPrompt,
   buildBodyUserPrompt,
   buildTitlesSystemPrompt,
   buildTitlesUserPrompt,
@@ -263,6 +264,64 @@ describe("buildTitlesSystemPrompt — examples 확장(하위 호환)", () => {
     expect(result).not.toBe(EXPECTED_NO_EXAMPLES);
     // JSON_ONLY_INSTRUCTION 은 여전히 정확히 한 번만 등장한다(중복 지시 없음).
     expect(result.split(JSON_ONLY_INSTRUCTION_TEXT).length - 1).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildBodySystemPrompt — 07 코드리뷰 지적: buildTitlesSystemPrompt 를 본문 생성에
+// 재사용하면 system 이 { items: [...] } 형식을 지시하는데 실제로는 LlmBodyDraftSchema
+// ({ body: string })로 파싱해, 실 LLM 호출에서 스키마 불일치가 나 매번 실패했다.
+// buildBodySystemPrompt 는 같은 규칙 블록(페르소나·톤·형식·must·ban·few-shot)을 공유하되
+// { body } 형식을 지시해야 하고, buildTitlesSystemPrompt 의 { items } 형식이 섞여 들어가면
+// 안 된다.
+// ---------------------------------------------------------------------------
+
+describe("buildBodySystemPrompt", () => {
+  it("{ body: string } 출력 형식을 지시하고, 제목용 { items: [...] } 형식은 지시하지 않는다", () => {
+    const result = buildBodySystemPrompt(SYSTEM_RULES_FIXTURE);
+
+    expect(result).toContain('출력 형식: { "body": string }.');
+    expect(result).not.toContain("items");
+    expect(result).not.toContain("title");
+    expect(result).not.toContain("angle");
+  });
+
+  it("페르소나·톤·형식·must·ban 블록은 buildTitlesSystemPrompt 와 동일한 내용을 담는다(공유된 규칙 블록)", () => {
+    const result = buildBodySystemPrompt(SYSTEM_RULES_FIXTURE);
+
+    expect(result).toContain("페르소나: 친근한 이웃");
+    expect(result).toContain("톤: 발랄함");
+    expect(result).toContain("형식: 500자 내외");
+    expect(result).toContain("반드시 포함할 표현: 글루텐프리, 저GI");
+    expect(result).toContain("금지 표현(괄호는 대체 표현): 질병 치료·예방 표현(대체: 관리에 도움); 최상급 표현");
+    expect(result).toContain(JSON_ONLY_INSTRUCTION_TEXT);
+  });
+
+  it("examples 가 있으면 JSON_ONLY_INSTRUCTION 이전에 few-shot 블록이 추가된다", () => {
+    const examples = [{ summary: "여름 다이어트 간식 후기, 글루텐프리 강조" }];
+
+    const result = buildBodySystemPrompt(SYSTEM_RULES_FIXTURE, examples);
+
+    const jsonInstructionIdx = result.indexOf(JSON_ONLY_INSTRUCTION_TEXT);
+    const exampleIdx = result.indexOf(examples[0].summary);
+    expect(exampleIdx).toBeGreaterThan(-1);
+    expect(exampleIdx).toBeLessThan(jsonInstructionIdx);
+  });
+
+  it("examples 를 생략해도 buildTitlesSystemPrompt(examples 생략)와 규칙 블록 줄 수·내용이 같고, 역할 소개·출력 형식 줄만 다르다", () => {
+    const bodyResult = buildBodySystemPrompt(SYSTEM_RULES_FIXTURE);
+    const titlesResult = buildTitlesSystemPrompt(SYSTEM_RULES_FIXTURE);
+
+    const bodyLines = bodyResult.split("\n");
+    const titlesLines = titlesResult.split("\n");
+
+    // 첫 줄(역할 소개)과 마지막에서 두 번째 줄(출력 형식)만 다르고, 나머지(페르소나~금지표현,
+    // JSON_ONLY_INSTRUCTION)는 완전히 같다.
+    expect(bodyLines.length).toBe(titlesLines.length);
+    expect(bodyLines[0]).not.toBe(titlesLines[0]);
+    expect(bodyLines.slice(1, -2)).toEqual(titlesLines.slice(1, -2));
+    expect(bodyLines.at(-2)).not.toBe(titlesLines.at(-2));
+    expect(bodyLines.at(-1)).toBe(titlesLines.at(-1)); // JSON_ONLY_INSTRUCTION 은 동일
   });
 });
 

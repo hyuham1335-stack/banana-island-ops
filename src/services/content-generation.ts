@@ -6,6 +6,7 @@ import type { LlmClient } from "@/lib/llm/client";
 import { LlmTimeoutError } from "@/lib/llm/client";
 import {
   buildBodyRegenPrompt,
+  buildBodySystemPrompt,
   buildBodyUserPrompt,
   buildTitleRegenPrompt,
   buildTitlesSystemPrompt,
@@ -418,7 +419,7 @@ export async function createContentWithBody(
     const examples = await examplesQuery;
 
     // 13. 프롬프트 조립.
-    const system = buildTitlesSystemPrompt(rules, examples.map((e) => ({ summary: e.summary })));
+    const system = buildBodySystemPrompt(rules, examples.map((e) => ({ summary: e.summary })));
     const user = buildBodyUserPrompt(renderedTemplate, input);
 
     // 14. 1차 LLM 호출 예산.

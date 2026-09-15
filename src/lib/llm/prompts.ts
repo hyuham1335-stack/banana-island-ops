@@ -12,9 +12,13 @@ import type { CreateContentInput, LlmTitleItem, TitleRequest } from "@/lib/schem
 const JSON_ONLY_INSTRUCTION =
   "반드시 JSON 만 출력한다. 설명 문구나 마크다운 코드펜스 없이 순수 JSON 값 하나만 반환한다.";
 
-// FR-005 few-shot 예시 — 기존 FR-004 호출부는 인자를 추가하지 않으므로 기본값 []. 그 경우
-// 아래 lines 배열은 확장 전과 완전히 같은 줄 구성이 되어 출력이 바이트 단위로 동일하다(회귀 없음).
-export function buildTitlesSystemPrompt(rules: ResolvedRules, examples: { summary: string }[] = []): string {
+// 제목(FR-004)·본문(FR-005) system 프롬프트가 공유하는 규칙 블록 — 페르소나·톤·형식·must·
+// ban·few-shot 예시. 역할 소개 줄과 출력 형식 지시는 **호출부가 각자 덧붙인다** — 제목은
+// { items: [...] }, 본문은 { body } 로 서로 다른 zod 스키마를 요구하므로 이 줄을 공유하면
+// system 프롬프트가 실제로 파싱할 스키마와 반대되는 형식을 LLM 에 지시하게 된다(07 코드리뷰
+// 지적 — 이전 버전은 buildTitlesSystemPrompt 를 본문 생성에도 그대로 재사용해 body 요청에마저
+// title/angle 3개 형식을 지시했다).
+function buildSharedRulesBlock(rules: ResolvedRules, examples: { summary: string }[]): string[] {
   const mustList = rules.must.length > 0 ? rules.must.join(", ") : "없음";
   const banList =
     rules.ban.length > 0
@@ -22,7 +26,6 @@ export function buildTitlesSystemPrompt(rules: ResolvedRules, examples: { summar
       : "없음";
 
   const lines = [
-    "너는 바나나아일랜드의 콘텐츠 작가다. 아래 브랜드 규칙을 지켜 제목과 앵글 3안을 만든다.",
     `페르소나: ${rules.persona || "지정 없음"}`,
     `톤: ${rules.tone || "지정 없음"}`,
     `형식: ${rules.format || "지정 없음"}`,
@@ -35,9 +38,30 @@ export function buildTitlesSystemPrompt(rules: ResolvedRules, examples: { summar
     examples.forEach((example, i) => lines.push(`예시 ${i + 1}: ${example.summary}`));
   }
 
-  lines.push('출력 형식: { "items": [{ "title": string, "angle": string }] } — items 는 정확히 3개.');
-  lines.push(JSON_ONLY_INSTRUCTION);
+  return lines;
+}
 
+// FR-005 few-shot 예시 — 기존 FR-004 호출부는 인자를 추가하지 않으므로 기본값 []. 그 경우
+// 아래 lines 배열은 확장 전과 완전히 같은 줄 구성이 되어 출력이 바이트 단위로 동일하다(회귀 없음).
+export function buildTitlesSystemPrompt(rules: ResolvedRules, examples: { summary: string }[] = []): string {
+  const lines = [
+    "너는 바나나아일랜드의 콘텐츠 작가다. 아래 브랜드 규칙을 지켜 제목과 앵글 3안을 만든다.",
+    ...buildSharedRulesBlock(rules, examples),
+    '출력 형식: { "items": [{ "title": string, "angle": string }] } — items 는 정확히 3개.',
+    JSON_ONLY_INSTRUCTION,
+  ];
+  return lines.join("\n");
+}
+
+// FR-005 본문 생성 system 프롬프트 — buildTitlesSystemPrompt 와 페르소나·톤·형식·must·ban·
+// few-shot 블록은 동일하게 공유하되, 역할 소개 문장과 출력 형식은 본문 생성에 맞게 따로 쓴다.
+export function buildBodySystemPrompt(rules: ResolvedRules, examples: { summary: string }[] = []): string {
+  const lines = [
+    "너는 바나나아일랜드의 콘텐츠 작가다. 아래 브랜드 규칙을 지켜 본문을 작성한다.",
+    ...buildSharedRulesBlock(rules, examples),
+    '출력 형식: { "body": string }.',
+    JSON_ONLY_INSTRUCTION,
+  ];
   return lines.join("\n");
 }
 
