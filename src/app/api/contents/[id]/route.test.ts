@@ -1,16 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-// 계약: FR-009(런 20260915-1754-5568) 「진입점 · GET /api/contents/{id}」
-//
-// 이 라우트(src/app/api/contents/[id]/route.ts, 작성 시점에 이미 존재)는 단일 서비스 함수를
-// 부르는 다른 라우트들과 달리 DB 조회(contents·content_history 카운트)와
-// resolveContentLink()·toContentDetail() 조립을 라우트 안에서 직접 한다. 그래서
-// getDb·getEnv·resolveContentLink(services/content-workflow, 별도로 단위테스트됨)만 모킹하고
-// toContentDetail 은 실물을 그대로 통과시켜(순수 함수, content-detail.test.ts 가 이미 전수
-// 검증) 배선이 맞는지를 본다.
+// 계약: FR-009(런 20260915-1754-5568) 「진입점 · GET /api/contents/{id}」— 07 code-review
+// 수리 라운드(CONTRACT_DEFECT): 이 라우트는 원래 DB 조회(contents·content_history 카운트)와
+// resolveContentLink()·toContentDetail() 조립을 라우트 안에서 직접 했으나, 그 로직 전체가
+// services/content-workflow.ts::getContentDetail() 로 옮겨져 submit·cancel-review 라우트와
+// 같은 얇은 디스패치가 됐다(src/app/api/contents/[id]/submit/route.test.ts 패턴 재사용) —
+// getContentDetail() 을 모킹해 id 파싱과 Result → 상태 코드 매핑만 검증한다.
 
 vi.mock("@/lib/db/client", () => ({
-  getDb: vi.fn(),
+  getDb: vi.fn(() => ({})),
 }));
 
 vi.mock("@/lib/env", () => ({
@@ -18,72 +16,46 @@ vi.mock("@/lib/env", () => ({
 }));
 
 vi.mock("@/services/content-workflow", () => ({
-  resolveContentLink: vi.fn(),
+  getContentDetail: vi.fn(),
 }));
 
-import { getDb } from "@/lib/db/client";
-import type { ContentsRow } from "@/lib/content-detail";
-import * as schema from "@/lib/db/schema";
-import { resolveContentLink } from "@/services/content-workflow";
+import { getContentDetail } from "@/services/content-workflow";
 import { GET, maxDuration } from "./route";
 
 const JSON_UTF8 = "application/json; charset=utf-8";
 
-function makeChainNode(resolvedValue: unknown) {
-  const node: Record<string, unknown> = {
-    then: (resolve: (v: unknown) => void) => resolve(resolvedValue),
-    catch: () => node,
-  };
-  return new Proxy(node, {
-    get(target, prop, receiver) {
-      if (prop in target) return Reflect.get(target, prop, receiver);
-      if (prop === "constructor" || typeof prop === "symbol") return undefined;
-      return (..._args: unknown[]) => node;
-    },
-  });
-}
-
-function stubDb(opts: { contentRows: ContentsRow[]; historyCountRows?: { count: number }[] }) {
-  const select = vi.fn(() => ({
-    from: vi.fn((table: unknown) => {
-      if (table === schema.contents) return makeChainNode(opts.contentRows);
-      if (table === schema.contentHistory) return makeChainNode(opts.historyCountRows ?? [{ count: 0 }]);
-      throw new Error(`unexpected select().from() table in test mock: ${String(table)}`);
-    }),
-  }));
-  return { select } as unknown as ReturnType<typeof getDb>;
-}
-
-const ROW: ContentsRow = {
+const CONTENT_DETAIL = {
   id: 501,
   publishPlanId: null,
   sourceContentId: null,
   productId: null,
   channelId: 10,
-  templateId: 900,
-  authorId: null,
-  reviewerId: null,
-  publisherId: null,
-  lang: "ko",
-  postType: "health_info",
+  lang: "ko" as const,
+  postType: "health_info" as const,
   targetPersona: "30대 직장인",
-  status: "draft",
+  status: "draft" as const,
   title: "여름철 든든한 간식",
-  titleCandidates: null,
   body: "정상적인 본문입니다.",
   regenCount: 0,
+  link: "https://shop.banana-island.co.kr/?utm_campaign=c-501",
+  validation: { blocks: [], warns: [], missing: [] },
   ruleSnapshot: { ruleIds: [], version: "v0", exampleIds: [] },
-  detectedTerms: { blocks: [], warns: [], missing: [] },
   sentPrompt: "===SYSTEM===\n...\n\n===USER===\n...",
   model: "claude-test-model",
   rejectReason: null,
   publishedUrl: null,
   urlCheck: null,
+  authorId: null,
+  reviewerId: null,
+  publisherId: null,
   submittedAt: null,
   reviewedAt: null,
   publishedAt: null,
-  updatedAt: new Date("2026-09-15T00:01:00Z"),
-  createdAt: new Date("2026-09-15T00:00:00Z"),
+  updatedAt: "2026-09-15T00:01:00.000Z",
+  createdAt: "2026-09-15T00:00:00.000Z",
+  isExample: false,
+  historyCount: 2,
+  autoRegenerated: false,
 };
 
 function reqFor(id: string): { request: Request; ctx: { params: Promise<{ id: string }> } } {
@@ -102,31 +74,27 @@ describe("GET /api/contents/{id}", () => {
     expect(maxDuration).toBe(10);
   });
 
-  it("존재하는 id 면 200 + { data: ContentDetail } 을 돌려준다", async () => {
-    vi.mocked(getDb).mockReturnValue(stubDb({ contentRows: [ROW], historyCountRows: [{ count: 2 }] }));
-    vi.mocked(resolveContentLink).mockResolvedValue("https://shop.banana-island.co.kr/?utm_campaign=c-501");
+  it("성공하면 getContentDetail(deps, id) 를 호출하고 Result.ok 를 200 + { data } 로 돌려준다", async () => {
+    vi.mocked(getContentDetail).mockResolvedValue({ ok: true, data: CONTENT_DETAIL });
 
     const { request, ctx } = reqFor("501");
     const res = await GET(request, ctx);
 
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe(JSON_UTF8);
-    const body = await res.json();
-    expect(body.data.id).toBe(501);
-    expect(body.data.link).toBe("https://shop.banana-island.co.kr/?utm_campaign=c-501");
-    expect(body.data.historyCount).toBe(2);
-    expect(body.data.status).toBe("draft");
-    expect(resolveContentLink).toHaveBeenCalledTimes(1);
+    expect(await res.json()).toEqual({ data: CONTENT_DETAIL });
+    expect(getContentDetail).toHaveBeenCalledTimes(1);
+    expect(getContentDetail).toHaveBeenCalledWith(expect.anything(), 501);
   });
 
-  it("id 가 정수 형식이 아니면 400 VALIDATION_ERROR 를 돌려주고 DB 를 조회하지 않는다", async () => {
+  it("id 가 정수 형식이 아니면 400 VALIDATION_ERROR 를 돌려주고 getContentDetail 을 호출하지 않는다", async () => {
     const { request, ctx } = reqFor("abc");
     const res = await GET(request, ctx);
 
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.error.code).toBe("VALIDATION_ERROR");
-    expect(getDb).not.toHaveBeenCalled();
+    expect(getContentDetail).not.toHaveBeenCalled();
   });
 
   it("id 가 0 이하이면 400 VALIDATION_ERROR 를 돌려준다", async () => {
@@ -134,19 +102,36 @@ describe("GET /api/contents/{id}", () => {
     const res = await GET(request, ctx);
 
     expect(res.status).toBe(400);
-    expect(getDb).not.toHaveBeenCalled();
+    expect(getContentDetail).not.toHaveBeenCalled();
   });
 
-  it("존재하지 않는 id 면 404 NOT_FOUND 를 돌려준다", async () => {
-    vi.mocked(getDb).mockReturnValue(stubDb({ contentRows: [] }));
+  it("Result.err(NOT_FOUND) 면 404 + { error } 봉투를 돌려준다", async () => {
+    vi.mocked(getContentDetail).mockResolvedValue({
+      ok: false,
+      error: { code: "NOT_FOUND", message: "콘텐츠를 찾을 수 없습니다.", details: { resource: "content", id: 999 } },
+    });
 
     const { request, ctx } = reqFor("999");
     const res = await GET(request, ctx);
 
     expect(res.status).toBe(404);
-    const body = await res.json();
-    expect(body.error.code).toBe("NOT_FOUND");
-    expect(body.error.details).toEqual({ resource: "content", id: 999 });
-    expect(resolveContentLink).not.toHaveBeenCalled();
+    expect(await res.json()).toEqual({
+      error: { code: "NOT_FOUND", message: "콘텐츠를 찾을 수 없습니다.", details: { resource: "content", id: 999 } },
+    });
+  });
+
+  it("Result.err(INTERNAL) 면 500 + { error } 봉투를 돌려준다", async () => {
+    vi.mocked(getContentDetail).mockResolvedValue({
+      ok: false,
+      error: { code: "INTERNAL", message: "콘텐츠 조회 중 오류가 발생했습니다." },
+    });
+
+    const { request, ctx } = reqFor("501");
+    const res = await GET(request, ctx);
+
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({
+      error: { code: "INTERNAL", message: "콘텐츠 조회 중 오류가 발생했습니다." },
+    });
   });
 });

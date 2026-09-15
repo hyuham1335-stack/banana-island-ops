@@ -1,39 +1,42 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // 계약: FR-009(런 20260915-1754-5568) 「유닛 · src/services/content-workflow.ts ·
-// listContents()·transition()·resolveContentLink()」— 05 리뷰 수리 라운드로 실제 구현이
-// 옛 계약(라우트 인라인 조회, insert(contentHistory).values() 직접 호출)에서 아래로 바뀌어
-// 이 스위트도 다시 썼다(추측이 아니라 src/services/content-workflow.ts 를 직접 읽어 확정).
+// listContents()·transition()·resolveContentLink()·getContentDetail()」— 07 code-review
+// 수리 라운드로 실제 구현이 다시 바뀌어(ADR-002: 낙관적 잠금 UPDATE 가 성공을 확인한 뒤에만
+// content_history 를 best-effort 로 쓴다) 이 스위트도 다시 썼다(추측이 아니라
+// src/services/content-workflow.ts 를 직접 읽어 확정).
 //
 // 외부 경계(계약): resolveRules·validate·buildUtmLink 는 실물 그대로 통과시킨다(내부 위임이지
 // 외부 경계가 아니다). resolveRules 의 호출 여부·인자를 관측해야 하는 케이스가 있어
 // content-generation.test.ts 와 같은 vi.mock(importOriginal) 스파이 패턴을 그대로 쓴다.
 // DB(drizzle)는 content-generation.test.ts 의 makeChainNode 패턴을 재사용해 모킹한다.
 //
-//   - listContents(deps: {db}, query: {status?, mine}, actor) — GET /api/contents 목록 조회가
-//     라우트에서 여기로 옮겨졌다. mine=true 면 select({id}).from(users).where(role=actor.role)
-//     로 유저를 찾고, 없으면(그 역할의 유저가 아직 없음) contents 조회 자체를 하지 않고 즉시
-//     [] 를 반환한다(결과 없음, 실패 아님). status·authorId 조건이 하나도 없으면 contents
-//     쿼리에 .where() 자체가 호출되지 않는다. detectedTerms(jsonb)의 warns.length 를
-//     warnCount 로 매핑하고, updatedAt·submittedAt 은 ISO 문자열로 바꾼다.
+//   - listContents(deps: {db}, query: {status?, mine}, actor) — 이전 라운드 그대로(변경 없음).
 //   - transition(deps: {db, productBaseUrl}, contentId, action, actor) — 4개 위치 인자.
-//   - resolveContentLink(deps: {db, productBaseUrl}, row) — deps 그대로.
+//   - resolveContentLink(deps: {db, productBaseUrl}, row) — deps 그대로(변경 없음).
+//   - getContentDetail(deps: {db, productBaseUrl}, contentId) — 신설. GET 상세 조회·조립을
+//     라우트에서 옮겨왔다 — select().from(contents) → 없으면 NOT_FOUND → resolveContentLink →
+//     historyCount(select count(*) from content_history) → toContentDetail 조립. transition()
+//     과 같은 try/catch·Result 패턴이라 DB 예외는 INTERNAL 로 매핑된다.
 //   - resolveRules 는 transition() 의 deps({db, productBaseUrl})를 그대로 넘겨 호출한다
 //     (resolveRules 는 db 만 쓰지만 구조적 타이핑상 그대로 통과된다).
-//   - 조회 순서: select().from(contents) 로 대상 행 전체 → (submit 이면) resolveRules →
-//     validate → 차단 있으면 update(contents).set({detectedTerms, updatedAt}).where(...) 만
-//     하고 반환(BLOCKED_TERMS_REMAIN) → 차단 없으면 versionNo 계산과 INSERT 를
-//     `db.execute(sql\`INSERT ... SELECT ... RETURNING version_no\`)` 원자 문 하나로 처리한다
-//     (count(*) 후 insert(contentHistory).values() 두 단계가 아니다 — 동시 submit 이 같은
-//     versionNo 를 계산하는 것을 막는다) → update(contents).set({status, updatedAt,
-//     submittedAt, detectedTerms}).where(id=contentId AND status=row.status).returning() —
-//     AND status=row.status 가 lost-update 가드다. .returning() 이 0행이면(다른 요청이 먼저
-//     상태를 바꿨다) 다시 select().from(contents) 로 최신 행을 읽어 그 status 기준
-//     INVALID_TRANSITION 을 반환한다(덮어쓰지 않는다). cancel_review 는 resolveRules 를
-//     건너뛰고 바로 같은 가드가 걸린 update(contents).set({status, updatedAt}).where(id=
-//     contentId AND status=row.status).returning() 한 뒤 select({count}).from(contentHistory)
-//     로 historyCount 를 다시 구한다(submit 과 달리 이미 계산해둔 값이 없어서, 그리고
-//     history_reason enum 에 'cancel_review' 값이 없어 이력 자체를 쓰지 않는다).
+//   - transition() 조회 순서(ADR-002): select().from(contents) 로 대상 행 전체 → (submit 이면)
+//     resolveRules → validate → 차단 있으면 update(contents).set({detectedTerms, updatedAt})
+//     .where(id=contentId AND status=row.status) 만 하고 반환(BLOCKED_TERMS_REMAIN, 이 UPDATE
+//     도 status 가드가 걸린다) → 차단 없으면 update(contents).set({status, updatedAt,
+//     submittedAt, detectedTerms}).where(id=contentId AND status=row.status).returning() 을
+//     먼저 실행한다(낙관적 잠금). .returning() 이 0행이면(다른 요청이 먼저 상태를 바꿨다)
+//     content_history 는 전혀 건드리지 않고 다시 select().from(contents) 로 최신 행을 읽어 그
+//     status 기준 INVALID_TRANSITION 을 반환한다(덮어쓰지 않는다). UPDATE 가 성공을 확인한
+//     뒤에만(action==='submit') select count(*) from content_history 로 count 를 구해
+//     nextVersionNo=count+1 을 계산하고 db.insert(contentHistory).values(...) 로 이력을 쓴다
+//     (원자 raw SQL 이 아니라 평범한 count→insert 두 단계다 — 이 UPDATE 를 통과하는 동시
+//     요청은 하나뿐이라 versionNo 계산이 레이스에 노출되지 않는다). cancel_review 는
+//     resolveRules 를 건너뛰고 바로 같은 가드가 걸린 update(contents).set({status, updatedAt,
+//     submittedAt: null}).where(id=contentId AND status=row.status).returning() 한 뒤
+//     select({count}).from(contentHistory) 로 historyCount 만 다시 구한다(history_reason enum
+//     에 'cancel_review' 값이 없어 이력 자체를 쓰지 않는다) — submittedAt 은 UPDATE 의
+//     .returning() 값과 무관하게 결과 조립 시 항상 null 로 고정된다.
 //   - FORBIDDEN_ROLE details = { required: "editor" }(cancel_review 만 role 제한).
 //   - INVALID_TRANSITION details = { from: row.status, action } — 동시성 충돌 경로에서는
 //     row.status 가 아니라 재조회한 최신 status 를 쓴다.
@@ -49,7 +52,7 @@ import * as schema from "@/lib/db/schema";
 import type { ContentsRow } from "@/lib/content-detail";
 import type { BrandRuleRow } from "@/lib/rules-merge";
 import { resolveRules } from "@/services/rules";
-import { listContents, resolveContentLink, transition } from "./content-workflow";
+import { getContentDetail, listContents, resolveContentLink, transition } from "./content-workflow";
 
 // ---------------------------------------------------------------------------
 // DB 스텁 헬퍼 — src/services/content-generation.test.ts 와 같은 Proxy 체인 패턴.
@@ -139,10 +142,10 @@ function createDbMock(opts: {
   productRows?: ProductRow[];
   historyCountRows?: { count: number }[];
   updateReturningResult?: Record<string, unknown>[];
-  executeResult?: { version_no: number }[];
 }) {
   const updateSetCalls: unknown[] = [];
-  const executeCalls: unknown[] = [];
+  const updateWhereCalls: unknown[] = [];
+  const insertValuesCalls: unknown[] = [];
   let contentsSelectCallIndex = 0;
 
   const select = vi.fn(() => ({
@@ -168,32 +171,42 @@ function createDbMock(opts: {
       set: vi.fn((vals: unknown) => {
         updateSetCalls.push(vals);
         return {
-          where: vi.fn(() => ({
-            // set().where() 자체가 await 될 수도 있고(BLOCKED_TERMS_REMAIN 경로),
-            // .returning() 이 더 붙을 수도 있다(성공 경로・lost-update 0행 경로) — 둘 다 지원한다.
-            then: (resolve: (v: unknown) => void) => resolve([]),
-            catch: () => {},
-            returning: vi.fn(() => makeChainNode(opts.updateReturningResult ?? [DEFAULT_RETURNING_ROW])),
-          })),
+          where: vi.fn((whereArg: unknown) => {
+            updateWhereCalls.push(whereArg);
+            return {
+              // set().where() 자체가 await 될 수도 있고(BLOCKED_TERMS_REMAIN 경로),
+              // .returning() 이 더 붙을 수도 있다(성공 경로・lost-update 0행 경로) — 둘 다 지원한다.
+              then: (resolve: (v: unknown) => void) => resolve([]),
+              catch: () => {},
+              returning: vi.fn(() => makeChainNode(opts.updateReturningResult ?? [DEFAULT_RETURNING_ROW])),
+            };
+          }),
         };
       }),
     };
   });
 
-  // content_history 의 versionNo 계산+삽입이 INSERT...SELECT 원자 문(raw SQL, deps.db.execute)
-  // 으로 바뀌었다 — db.insert(contentHistory).values() 는 더 이상 프로덕션 코드가 호출하지 않는다.
-  const execute = vi.fn(async (query: unknown) => {
-    executeCalls.push(query);
-    return { rows: opts.executeResult ?? [{ version_no: 1 }] };
+  // ADR-002: content_history 의 versionNo 계산+삽입은 원자 raw SQL(db.execute)이 아니라 평범한
+  // select count(*) → db.insert(contentHistory).values() 두 단계다. 상태 UPDATE(낙관적 잠금)가
+  // 성공을 확인한 뒤에만 호출된다.
+  const insert = vi.fn((table: unknown) => {
+    if (table !== schema.contentHistory) throw new Error("unexpected insert() table in test mock");
+    return {
+      values: vi.fn((vals: unknown) => {
+        insertValuesCalls.push(vals);
+        return makeChainNode(undefined);
+      }),
+    };
   });
 
   return {
-    db: { select, update, execute } as unknown as Db,
+    db: { select, update, insert } as unknown as Db,
     select,
     update,
-    execute,
+    insert,
     updateSetCalls,
-    executeCalls,
+    updateWhereCalls,
+    insertValuesCalls,
   };
 }
 
@@ -381,14 +394,14 @@ describe("listContents", () => {
 
 describe("transition", () => {
   it("NOT_FOUND — 존재하지 않는 contentId 면 NOT_FOUND 를 돌려주고 아무 것도 쓰지 않는다", async () => {
-    const { db, update, execute } = createDbMock({ contentRows: [] });
+    const { db, update, insert } = createDbMock({ contentRows: [] });
 
     const result = await transition({ db, ...DEPS }, 999, "submit", { role: "editor" });
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.code).toBe("NOT_FOUND");
     expect(update).not.toHaveBeenCalled();
-    expect(execute).not.toHaveBeenCalled();
+    expect(insert).not.toHaveBeenCalled();
   });
 
   it("FORBIDDEN_ROLE — cancel_review 를 role=admin 이 호출하면 거부된다", async () => {
@@ -433,10 +446,10 @@ describe("transition", () => {
     expect(update).not.toHaveBeenCalled();
   });
 
-  it("INVALID_TRANSITION(동시성 충돌) — 최종 UPDATE 가 0행을 반환하면(다른 요청이 먼저 상태를 바꿨다) 최신 상태로 다시 읽어 그 값 기준 INVALID_TRANSITION 을 반환하고 조용히 덮어쓰지 않는다", async () => {
+  it("INVALID_TRANSITION(동시성 충돌) — 최종 UPDATE 가 0행을 반환하면(다른 요청이 먼저 상태를 바꿨다) 최신 상태로 다시 읽어 그 값 기준 INVALID_TRANSITION 을 반환하고, ADR-002 대로 content_history 에는 아무 것도 쓰지 않는다", async () => {
     const staleRow = contentRow({ status: "draft", body: "깨끗한 본문입니다." });
     const freshRow = contentRow({ status: "in_review" });
-    const { db, update, execute } = createDbMock({
+    const { db, update, insert } = createDbMock({
       contentRows: [staleRow],
       contentRowsSequence: [[staleRow], [freshRow]],
       ruleRows: [],
@@ -450,15 +463,16 @@ describe("transition", () => {
       expect(result.error.code).toBe("INVALID_TRANSITION");
       expect(result.error.details).toEqual({ from: "in_review", action: "submit" });
     }
-    // 이력 insert(execute)는 정상 실행됐지만(차단 없음) 최종 UPDATE 는 가드에 걸려 0행 —
-    // update() 자체는 1번(최종 UPDATE)만 호출된다(재조회는 select 이지 update 가 아니다).
+    // 최종 UPDATE 는 가드에 걸려 0행 — update() 자체는 1번(최종 UPDATE)만 호출된다(재조회는
+    // select 이지 update 가 아니다). 상태 UPDATE 가 실패했으므로 content_history INSERT
+    // 자체가 실행되지 않는다(ADR-002).
     expect(update).toHaveBeenCalledTimes(1);
-    expect(execute).toHaveBeenCalledTimes(1);
+    expect(insert).not.toHaveBeenCalled();
   });
 
-  it("BLOCKED_TERMS_REMAIN — submit 시 차단 등급 표현이 남아 있으면 422 를 돌려주고, 상태는 바꾸지 않되 detectedTerms 는 갱신하는 UPDATE 를 호출한다", async () => {
+  it("BLOCKED_TERMS_REMAIN — submit 시 차단 등급 표현이 남아 있으면 422 를 돌려주고, 상태는 바꾸지 않되 detectedTerms 는 갱신하는 UPDATE(status 가드 포함)를 호출한다", async () => {
     const row = contentRow({ status: "draft", body: "당뇨 완치 프로젝트 본문" });
-    const { db, update, execute, updateSetCalls } = createDbMock({
+    const { db, update, insert, updateSetCalls, updateWhereCalls } = createDbMock({
       contentRows: [row],
       ruleRows: [CURE_BAN_RULE],
     });
@@ -477,16 +491,19 @@ describe("transition", () => {
       detectedTerms: expect.objectContaining({ blocks: expect.any(Array) }),
     });
     expect(updateSetCalls[0]).not.toHaveProperty("status");
-    // 차단으로 끝났으니 이력 execute(INSERT...SELECT) 는 일어나지 않는다.
-    expect(execute).not.toHaveBeenCalled();
+    // 이 UPDATE 도 .where() 가 호출됐다(id=contentId AND status=row.status 가드) — 인자가 있는
+    // (0-arg 가 아닌) 호출이었는지를 본다.
+    expect(updateWhereCalls[0]).toBeTruthy();
+    // 차단으로 끝났으니 이력 insert 는 일어나지 않는다.
+    expect(insert).not.toHaveBeenCalled();
   });
 
-  it("submit 성공(draft→in_review, 차단 0건) — content_history 에 INSERT...SELECT(execute) 원자 문으로 이력이 쓰이고 그 versionNo 가 historyCount 로, contents.submittedAt 이 설정된다", async () => {
+  it("submit 성공(draft→in_review, 차단 0건) — 상태 UPDATE(낙관적 잠금)가 성공을 확인한 뒤에만(ADR-002) db.insert(contentHistory).values() 로 이력이 쓰이고, count+1 이 historyCount 로, contents.submittedAt 이 설정된다", async () => {
     const row = contentRow({ status: "draft", body: "깨끗한 본문입니다." });
-    const { db, update, execute, updateSetCalls } = createDbMock({
+    const { db, update, insert, updateSetCalls, insertValuesCalls } = createDbMock({
       contentRows: [row],
       ruleRows: [],
-      executeResult: [{ version_no: 5 }],
+      historyCountRows: [{ count: 4 }],
     });
 
     const result = await transition({ db, ...DEPS }, 1, "submit", { role: "editor" });
@@ -494,18 +511,28 @@ describe("transition", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.data.status).toBe("in_review");
-      // db.execute() 가 돌려준 version_no 가 그대로 historyCount 로 쓰인다.
-      expect(result.data.historyCount).toBe(5);
+      expect(result.data.historyCount).toBe(5); // count(4) + 1
     }
     expect(update).toHaveBeenCalledTimes(1);
     expect(updateSetCalls[0]).toMatchObject({ status: "in_review" });
     expect(updateSetCalls[0]).toHaveProperty("submittedAt");
-    expect(execute).toHaveBeenCalledTimes(1);
+    expect(insert).toHaveBeenCalledTimes(1);
+    expect(insert).toHaveBeenCalledWith(schema.contentHistory);
+    expect(insertValuesCalls[0]).toMatchObject({
+      contentId: 1,
+      versionNo: 5,
+      reason: "submit",
+      title: row.title,
+      body: row.body,
+    });
+    // ADR-002: UPDATE(낙관적 잠금)가 먼저 호출되고, 그 성공을 확인한 뒤에만 insert 가 호출된다
+    // (raw SQL 원자 INSERT...SELECT 가 아니다).
+    expect(update.mock.invocationCallOrder[0]).toBeLessThan(insert.mock.invocationCallOrder[0]);
   });
 
   it("submit 성공(rejected→in_review) — draft 와 별도로 rejected 출발도 허용된다", async () => {
     const row = contentRow({ status: "rejected", body: "깨끗한 본문입니다." });
-    const { db, update, execute, updateSetCalls } = createDbMock({
+    const { db, update, insert, updateSetCalls } = createDbMock({
       contentRows: [row],
       ruleRows: [],
     });
@@ -513,10 +540,10 @@ describe("transition", () => {
     const result = await transition({ db, ...DEPS }, 1, "submit", { role: "editor" });
 
     expect(result.ok).toBe(true);
-    if (result.ok) expect(result.data.historyCount).toBe(1); // execute mock 기본값(version_no:1)
+    if (result.ok) expect(result.data.historyCount).toBe(1); // count(0)+1
     expect(update).toHaveBeenCalledTimes(1);
     expect(updateSetCalls[0]).toMatchObject({ status: "in_review" });
-    expect(execute).toHaveBeenCalledTimes(1);
+    expect(insert).toHaveBeenCalledTimes(1);
   });
 
   it("submit 은 role=admin 이 호출해도 허용된다(누구나, API_SPEC.md — submit 은 role 제한이 없다)", async () => {
@@ -529,18 +556,25 @@ describe("transition", () => {
     expect(update).toHaveBeenCalledTimes(1);
   });
 
-  it("cancel_review 성공(in_review→draft, role=editor)", async () => {
-    const row = contentRow({ status: "in_review" });
-    const { db, update, execute, updateSetCalls } = createDbMock({ contentRows: [row] });
+  it("cancel_review 성공(in_review→draft, role=editor) — 기존에 submittedAt 이 있던 콘텐츠도 submittedAt 을 null 로 초기화하고 이력은 쓰지 않는다", async () => {
+    const row = contentRow({ status: "in_review", submittedAt: new Date("2026-09-15T00:02:00Z") });
+    const { db, update, insert, updateSetCalls } = createDbMock({
+      contentRows: [row],
+      historyCountRows: [{ count: 3 }],
+    });
 
     const result = await transition({ db, ...DEPS }, 1, "cancel_review", { role: "editor" });
 
     expect(result.ok).toBe(true);
-    if (result.ok) expect(result.data.status).toBe("draft");
+    if (result.ok) {
+      expect(result.data.status).toBe("draft");
+      expect(result.data.submittedAt).toBeNull();
+      expect(result.data.historyCount).toBe(3);
+    }
     expect(update).toHaveBeenCalledTimes(1);
-    expect(updateSetCalls[0]).toMatchObject({ status: "draft" });
-    // history_reason enum(src/lib/db/schema.ts 58행)에 'cancel_review' 값이 없다 — 이력 execute 없음.
-    expect(execute).not.toHaveBeenCalled();
+    expect(updateSetCalls[0]).toMatchObject({ status: "draft", submittedAt: null });
+    // history_reason enum(src/lib/db/schema.ts)에 'cancel_review' 값이 없다 — 이력 insert 없음.
+    expect(insert).not.toHaveBeenCalled();
   });
 
   it("cancel_review 는 resolveRules 를 호출하지 않는다(재검증이 필요 없는 되돌리기)", async () => {
@@ -554,7 +588,7 @@ describe("transition", () => {
 
   it("resolveRules 가 실패(NOT_FOUND)를 돌려주면 submit 은 그 실패를 그대로 전파하고 아무 것도 쓰지 않는다", async () => {
     const row = contentRow({ status: "draft", channelId: 999 });
-    const { db, update, execute } = createDbMock({ contentRows: [row], channelRows: [] });
+    const { db, update, insert } = createDbMock({ contentRows: [row], channelRows: [] });
 
     const result = await transition({ db, ...DEPS }, 1, "submit", { role: "editor" });
 
@@ -565,7 +599,7 @@ describe("transition", () => {
       { channelId: 999, lang: "ko", productId: undefined },
     );
     expect(update).not.toHaveBeenCalled();
-    expect(execute).not.toHaveBeenCalled();
+    expect(insert).not.toHaveBeenCalled();
   });
 
   it("productId: null 인 행은 resolveRules 에 productId: undefined 로 전달된다", async () => {
@@ -609,5 +643,52 @@ describe("resolveContentLink", () => {
     const link = await resolveContentLink({ db, ...DEPS }, row);
 
     expect(link).toBe("");
+  });
+});
+
+describe("getContentDetail", () => {
+  it("존재하는 id 면 resolveContentLink 와 historyCount 를 조립해 Result.ok(ContentDetail) 을 반환한다", async () => {
+    const row = contentRow({ id: 501, channelId: 10, productId: null });
+    const { db } = createDbMock({
+      contentRows: [row],
+      channelRows: [CHANNEL_ROW],
+      historyCountRows: [{ count: 2 }],
+    });
+
+    const result = await getContentDetail({ db, ...DEPS }, 501);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.id).toBe(501);
+      expect(result.data.status).toBe("draft");
+      expect(result.data.link).toContain("utm_source=kakao");
+      expect(result.data.link).toContain("c-501");
+      expect(result.data.historyCount).toBe(2);
+    }
+  });
+
+  it("NOT_FOUND — 존재하지 않는 contentId 면 NOT_FOUND 를 반환한다", async () => {
+    const { db } = createDbMock({ contentRows: [] });
+
+    const result = await getContentDetail({ db, ...DEPS }, 999);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe("NOT_FOUND");
+      expect(result.error.details).toEqual({ resource: "content", id: 999 });
+    }
+  });
+
+  it("DB 조회 중 예외가 발생하면 INTERNAL 을 반환한다", async () => {
+    const db = {
+      select: vi.fn(() => {
+        throw new Error("connection lost");
+      }),
+    } as unknown as Db;
+
+    const result = await getContentDetail({ db, ...DEPS }, 1);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe("INTERNAL");
   });
 });

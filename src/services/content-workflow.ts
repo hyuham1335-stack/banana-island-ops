@@ -70,6 +70,62 @@ export async function resolveContentLink(
   return channel.linkPolicy === "none" ? "" : link;
 }
 
+/**
+ * GET /api/contents/{id} 상세 조회 — CONTRACT_DEFECT 수리(07 code-review): submit·
+ * cancel-review 라우트가 이미 transition() 하나만 호출하는 얇은 형태인 것과 달리 이
+ * 라우트만 SELECT·resolveContentLink·historyCount 조회·toContentDetail 조립을 라우트
+ * 안에서 직접 했다(CLAUDE.md CRITICAL — 서버 로직은 Route Handler 가 받아 services 가
+ * 처리한다). transition() 과 같은 try/catch·Result 패턴으로 통일한다.
+ */
+export async function getContentDetail(
+  deps: { db: Db; productBaseUrl: string },
+  contentId: number,
+): Promise<Result<ContentDetail>> {
+  try {
+    const selectQuery = deps.db.select().from(contents);
+    selectQuery.where(eq(contents.id, contentId));
+    const rows = await selectQuery;
+    const row = rows[0];
+
+    if (!row) {
+      return {
+        ok: false,
+        error: {
+          code: "NOT_FOUND",
+          message: "콘텐츠를 찾을 수 없습니다.",
+          details: { resource: "content", id: contentId },
+        },
+      };
+    }
+
+    const link = await resolveContentLink(deps, row);
+
+    const historyCountQuery = deps.db.select({ count: sql<number>`count(*)` }).from(contentHistory);
+    historyCountQuery.where(eq(contentHistory.contentId, contentId));
+    const historyCountRows = await historyCountQuery;
+    const historyCount = Number(historyCountRows[0]?.count ?? 0);
+
+    const data = toContentDetail(row, {
+      validation: (row.detectedTerms as ValidationResult | null) ?? { blocks: [], warns: [], missing: [] },
+      link,
+      isExample: false,
+      historyCount,
+      autoRegenerated: row.regenCount > 0,
+    });
+
+    return { ok: true, data };
+  } catch (err) {
+    console.error(
+      JSON.stringify({
+        event: "content_detail_fetch_failed",
+        contentId,
+        message: err instanceof Error ? err.message : String(err),
+      }),
+    );
+    return { ok: false, error: { code: "INTERNAL", message: "콘텐츠 조회 중 오류가 발생했습니다." } };
+  }
+}
+
 export interface ContentSummary {
   id: number;
   title: string;
@@ -200,7 +256,6 @@ export async function transition(
     }
 
     let validation: ValidationResult | null = null;
-    let submitVersionNo: number | null = null;
 
     if (action === "submit") {
       const rulesResult = await resolveRules(deps, {
@@ -215,10 +270,13 @@ export async function transition(
       validation = validate(row.body ?? "", { must: rulesResult.data.must, ban: rulesResult.data.ban });
 
       if (validation.blocks.length > 0) {
+        // AND status=row.status — 이 UPDATE 는 상태를 바꾸지 않으므로 0행이어도 별도 처리
+        // 없이 그대로 BLOCKED_TERMS_REMAIN 을 반환한다(원래 읽은 정보로 알리는 것 자체는
+        // 여전히 유효하다).
         const blockedUpdateQuery = deps.db
           .update(contents)
           .set({ detectedTerms: validation, updatedAt: sql`now()` })
-          .where(eq(contents.id, contentId));
+          .where(and(eq(contents.id, contentId), eq(contents.status, row.status)));
         await blockedUpdateQuery;
 
         return {
@@ -230,20 +288,6 @@ export async function transition(
           },
         };
       }
-
-      // count(*) 조회와 INSERT 를 분리하면 동시 submit 두 건이 같은 versionNo 를 계산할 수
-      // 있다(content_history_content_version_idx 는 unique 제약이 아니다) — versionNo 계산과
-      // 삽입을 하나의 INSERT...SELECT 문으로 원자화한다. drizzle 쿼리 빌더로는 서브쿼리
-      // SELECT 를 INSERT 값으로 쓰는 형태가 마땅치 않아 raw SQL(파라미터는 sql 템플릿의
-      // ${} 바인딩)을 쓴다.
-      const detectedTermsParam = row.detectedTerms === null ? null : JSON.stringify(row.detectedTerms);
-      const historyInsertResult = await deps.db.execute<{ version_no: number }>(sql`
-        INSERT INTO content_history (content_id, version_no, reason, title, body, sent_prompt, detected_terms, changed_by)
-        SELECT ${contentId}, COALESCE(MAX(version_no), 0) + 1, 'submit', ${row.title}, ${row.body}, ${row.sentPrompt}, ${detectedTermsParam}::jsonb, NULL
-        FROM content_history WHERE content_id = ${contentId}
-        RETURNING version_no
-      `);
-      submitVersionNo = Number(historyInsertResult.rows[0]?.version_no ?? 1);
     }
 
     // action 별로 .set() 인자 형태가 달라(submit 만 submittedAt·detectedTerms 를 추가) 객체
@@ -261,7 +305,7 @@ export async function transition(
             .returning({ updatedAt: contents.updatedAt, submittedAt: contents.submittedAt })
         : deps.db
             .update(contents)
-            .set({ status: rule.to, updatedAt: sql`now()` })
+            .set({ status: rule.to, updatedAt: sql`now()`, submittedAt: null })
             .where(and(eq(contents.id, contentId), eq(contents.status, row.status)))
             .returning({ updatedAt: contents.updatedAt, submittedAt: contents.submittedAt });
     const updatedRows = await updateQuery;
@@ -287,10 +331,29 @@ export async function transition(
 
     const link = await resolveContentLink(deps, row);
 
+    // ADR-002: 낙관적 잠금 UPDATE 가 성공(위 updated 확인)한 뒤에만 content_history 를
+    // 쓴다 — 같은 콘텐츠에 대한 동시 submit 두 건 중 이 UPDATE 를 통과하는 것은 하나뿐이라
+    // versionNo 계산(count(*) 후 INSERT)이 레이스에 노출되지 않는다. UPDATE 가 지면
+    // 위에서 이미 반환했으므로 여기 도달하는 submit 요청은 항상 하나뿐이다.
     let historyCount: number;
-    if (submitVersionNo !== null) {
-      // 방금 INSERT 한 content_history 행까지 포함한 개수 — 위에서 계산한 versionNo 와 동일값이다.
-      historyCount = submitVersionNo;
+    if (action === "submit") {
+      const historyCountQuery = deps.db.select({ count: sql<number>`count(*)` }).from(contentHistory);
+      historyCountQuery.where(eq(contentHistory.contentId, contentId));
+      const historyCountRows = await historyCountQuery;
+      const nextVersionNo = Number(historyCountRows[0]?.count ?? 0) + 1;
+
+      const historyInsertQuery = deps.db.insert(contentHistory).values({
+        contentId,
+        versionNo: nextVersionNo,
+        reason: "submit",
+        title: row.title,
+        body: row.body,
+        sentPrompt: row.sentPrompt,
+        detectedTerms: row.detectedTerms,
+        changedBy: null,
+      });
+      await historyInsertQuery;
+      historyCount = nextVersionNo;
     } else {
       const historyCountQuery = deps.db.select({ count: sql<number>`count(*)` }).from(contentHistory);
       historyCountQuery.where(eq(contentHistory.contentId, contentId));
@@ -302,7 +365,7 @@ export async function transition(
       ...row,
       status: rule.to,
       updatedAt: updated?.updatedAt ?? row.updatedAt,
-      submittedAt: action === "submit" ? (updated?.submittedAt ?? row.submittedAt) : row.submittedAt,
+      submittedAt: action === "submit" ? (updated?.submittedAt ?? row.submittedAt) : null,
       detectedTerms: action === "submit" ? validation : row.detectedTerms,
     };
 
