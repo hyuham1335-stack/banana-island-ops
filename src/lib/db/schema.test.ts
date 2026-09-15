@@ -119,6 +119,36 @@ describe("schema — ADR 가드", () => {
     expect(col("cost_calc_results", "fx_usd")).toBeDefined();
   });
 
+  // 계약: FR-005 「스키마·데이터 변경」 — contents.post_type 컬럼 추가.
+  // postTypeEnum("post_type").notNull() 이고, 기존 postTypeEnum 재사용(새 enum 없음).
+  // 컬럼 위치는 lang 다음, targetPersona 이전(기존 컬럼 순서 참고).
+  it("(i) contents.post_type 은 postTypeEnum 을 재사용하는 NOT NULL 컬럼이다(새 enum 을 만들지 않는다)", () => {
+    const postType = col("contents", "post_type");
+    expect(postType).toBeDefined();
+    expect(postType?.notNull).toBe(true);
+
+    const enumCol = postType as unknown as { enum: unknown; enumValues: readonly string[] };
+    // publish_plans.post_type 과 동일한 enum 인스턴스를 참조해야 한다 — 별도 enum 을
+    // 새로 만들었다면 이 identity 비교가 깨진다.
+    const publishPlansPostType = col("publish_plans", "post_type") as unknown as { enum: unknown } | undefined;
+    expect(publishPlansPostType).toBeDefined();
+    expect(enumCol.enum).toBe(publishPlansPostType!.enum);
+    expect([...enumCol.enumValues]).toEqual(["health_info", "activity_news", "comparison", "review"]);
+  });
+
+  it("(j) contents 컬럼 순서 — post_type 은 lang 바로 다음, target_persona 바로 이전이다", () => {
+    const names = byName["contents"].columns.map((c) => c.name);
+    const langIdx = names.indexOf("lang");
+    const postTypeIdx = names.indexOf("post_type");
+    const personaIdx = names.indexOf("target_persona");
+
+    expect(langIdx).toBeGreaterThanOrEqual(0);
+    expect(postTypeIdx).toBeGreaterThanOrEqual(0);
+    expect(personaIdx).toBeGreaterThanOrEqual(0);
+    expect(postTypeIdx).toBe(langIdx + 1);
+    expect(personaIdx).toBe(postTypeIdx + 1);
+  });
+
   it("(h) numeric 컬럼은 전부 precision·scale 이 있다 — 환율(fx_rates.rate · fx_*)은 (18,8), 나머지는 (14,4)", () => {
     let numericCount = 0;
     for (const t of tables) {

@@ -233,6 +233,7 @@ export const contents = pgTable(
     reviewerId: ref("reviewer_id").references(() => users.id),
     publisherId: ref("publisher_id").references(() => users.id),
     lang: langEnum("lang").notNull(),
+    postType: postTypeEnum("post_type").notNull(),
     targetPersona: text("target_persona"),
     status: contentStatusEnum("status").notNull().default("draft"),
     title: text("title").notNull(),
