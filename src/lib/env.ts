@@ -23,6 +23,9 @@ const EnvSchema = z.object({
   // Should
   CRON_SECRET: optional,
   SHEET_WEBHOOK_SECRET: optional,
+  // Node/Next.js 런타임이 항상 주입하지만 형식상 optional — role 쿠키의 secure 플래그
+  // 판정(계약 20260916-0038-3305)에 process.env 를 직접 읽지 않고 이 스키마를 거치게 한다.
+  NODE_ENV: z.string().trim().min(1).optional(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

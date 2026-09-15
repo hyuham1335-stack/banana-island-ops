@@ -100,6 +100,7 @@ a {
   height: 57px;
   display: flex;
   align-items: center;
+  justify-content: space-between;
   padding: 0 22px;
   background: var(--topbar);
   color: var(--on-topbar);
@@ -376,7 +377,8 @@ td {
   border-color: var(--leaf);
 }
 
-.chip[aria-pressed="true"] {
+.chip[aria-pressed="true"],
+.chip[aria-current="true"] {
   background: var(--leaf);
   border-color: var(--leaf);
   color: #fff;
