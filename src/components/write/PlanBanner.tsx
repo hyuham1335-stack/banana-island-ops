@@ -5,6 +5,7 @@ export interface PlanBannerData {
   scheduledDate: string;
   channelId: number;
   channelName: string;
+  lang: "ko" | "en";
   productId: number | null;
   productName: string | null;
   postType: PostType;
@@ -12,39 +13,24 @@ export interface PlanBannerData {
   sheetRowKey: string;
 }
 
-/** 시트에서 온 값 — 화면에서 못 고친다(docs/UI_GUIDE.md 「생성 텍스트 블록」). */
-export function PlanBanner({ plan }: { plan: PlanBannerData }) {
+/**
+ * 시트에서 온 값 — 화면에서 못 고친다(docs/UI_GUIDE.md 「생성 텍스트 블록」). 목업처럼 굵은
+ * 계획ID + 평문 나열을 한 줄에 놓고, 현재 선택값이 계획과 다르면 `diff` 로 "계획과 다름" 태그를
+ * 보인다(US-003 AC), 끝에는 `.src.sheet` 로 시트 출처를 표시한다.
+ */
+export function PlanBanner({ plan, diff }: { plan: PlanBannerData; diff: boolean }) {
   return (
-    <dl className="plan-banner">
-      <span className="src sheet" aria-hidden="true" />
-      <div>
-        <dt>계획 ID</dt>
-        <dd>#{plan.planId}</dd>
-      </div>
-      <div>
-        <dt>예정일</dt>
-        <dd>{plan.scheduledDate}</dd>
-      </div>
-      <div>
-        <dt>채널</dt>
-        <dd>{plan.channelName}</dd>
-      </div>
-      <div>
-        <dt>제품</dt>
-        <dd>{productLabel(plan.productName)}</dd>
-      </div>
-      <div>
-        <dt>글 유형</dt>
-        <dd>{POST_TYPE_LABELS[plan.postType]}</dd>
-      </div>
-      <div>
-        <dt>담당자</dt>
-        <dd>{plan.ownerName ?? "담당자 미배정"}</dd>
-      </div>
-      <div>
-        <dt>시트 행</dt>
-        <dd>{plan.sheetRowKey}</dd>
-      </div>
-    </dl>
+    <div className="plan-banner">
+      <b>계획 #{plan.planId}</b>
+      <span>{plan.scheduledDate} 발행 예정</span>
+      <span>
+        {plan.channelName} · {plan.lang === "ko" ? "국문" : "영문"}
+      </span>
+      <span>{POST_TYPE_LABELS[plan.postType]}</span>
+      <span>제품 {productLabel(plan.productName)}</span>
+      <span>담당 {plan.ownerName ?? "담당자 미배정"}</span>
+      {diff ? <span className="tag ripe">계획과 다름 — 계획은 시트에서만 수정</span> : null}
+      <span className="src sheet">시트 행 {plan.sheetRowKey}</span>
+    </div>
   );
 }
