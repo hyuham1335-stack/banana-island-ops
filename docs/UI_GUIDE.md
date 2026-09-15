@@ -77,11 +77,11 @@
 | **Panel** | `.panel` > `.panel-head`(제목·`.panel-note`·우측 액션) > 본문 | — | 본문에 `.empty` 「불러오는 중」 | `.notice.bad` | `.empty` |
 | **KpiBand** | `.kpi-band` 4열(2열 분기), `.kpi-now` + 단위 + 목표, 3px 트랙 + 목표 마커 | 「데이터 없음 · Should」 | 값 자리 「…」 | 「집계 실패」 | 실제 0 |
 | **Table** | `th` 12px muted, 행 `.click`/`.sel`, `.num`, `.bar-cell`(8px 바 `low/mid`), `.sub` 부제 | — | 첫 행 「불러오는 중」 | `.notice.bad` 행 | `colspan` 한 행 「해당 상태의 콘텐츠가 없습니다」 |
-| **Tag** | `.tag.{good,hold,warn,ripe,done,off}` 상태 텍스트 | — | — | — | — |
-| **Chip** | `.chip[aria-pressed]` 단일 선택 그룹(채널·언어·글 유형·필터), `.n` 카운트 | — | — | — | — |
-| **Button** | `.btn` 채움(주 액션) · `.btn.ghost` · `.btn.danger`(반려·삭제) · `.btn.small`. `:disabled` 는 사유 문구를 옆에 | — | 문구가 진행형으로(「Sheets API 로 다시 읽는 중…」) + disabled | — | — |
+| **Tag** | `.tag.{good,hold,warn,ripe,off}` 배경 없는 outline 텍스트(`border:1px solid currentColor`, radius 0, 색만 다름) · `.tag.done` 만 예외로 leaf 채움 + 흰 글자 | — | — | — | — |
+| **Chip** | `.chip[aria-pressed]` 단일 선택 그룹(채널·언어·글 유형·필터), `.n` 카운트. 선택 시 leaf **채움**(흰 글자) — 연한 배경 아님 | — | — | — | — |
+| **Button** | `.btn` 채움(주 액션) · `.btn.ghost`(배경만 없앰, 테두리는 leaf 그대로) · `.btn.danger`(반려·삭제 — outline, 배경 없음, clay 테두리·글자) · `.btn.small`. `:disabled` 는 사유 문구를 옆에 | — | 문구가 진행형으로(「Sheets API 로 다시 읽는 중…」) + disabled | — | — |
 | **Field** | `.field` label + `.hint` + input/select/textarea, 2px radius, `--line-strong` | placeholder 는 예시 형식(「예: 저GI 베이킹 기초」) | — | 테두리 `--clay` + 아래 문구 | — |
-| **AutoBox** | `.auto` 「기준 자료에서 자동 적용」 — 톤·형식·필수 표현·금칙어(`.ban` clay), 버전·규칙 수 | 「규칙 없음 · 브랜드 기준에서 추가」 | `.loading`(opacity .55) + 「GET /api/rules/resolve … 불러오는 중」 | `.notice.bad` 「기준을 불러오지 못했습니다」 + 재시도 | 규칙 0개면 각 행 「—」 |
+| **AutoBox** | `.auto` 「기준 자료에서 자동 적용」 — 톤·형식·필수 표현·금칙어, 버전·규칙 수. 금칙어는 규칙별 카드가 아니라 "표현 (경고)" 를 `·` 로 이어붙인 한 줄(`.auto-val.ban` clay 텍스트) — 대체표현·근거는 여기 없고 생성 후 `.checks`/콘텐츠 상세에서만 보인다 | 「규칙 없음 · 브랜드 기준에서 추가」 | `.loading`(opacity .55) + 「GET /api/rules/resolve … 불러오는 중」 | `.notice.bad` 「기준을 불러오지 못했습니다」 + 재시도 | 규칙 0개면 각 행 「—」 |
 | **Confirm** | `.confirm` 인라인 확인(「직접 고친 타깃이 있습니다. 바꿀까요?」 바꾸기/유지) | — | — | — | — |
 | **Steps** | `.steps` 1 제목 3안 · 2 본문 초안 · 3 검수 요청, `.on`/`.done` | — | — | — | — |
 | **Option** | `.opt[aria-pressed]` 제목+앵글 후보, `.opt-n` 번호 | — | — | — | — |

@@ -14,10 +14,8 @@ export function Panel({
   return (
     <section className="panel">
       <div className="panel-head">
-        <div>
-          <h2>{title}</h2>
-          {note ? <span className="panel-note">{note}</span> : null}
-        </div>
+        <span className="panel-title">{title}</span>
+        {note ? <span className="panel-note">{note}</span> : null}
         {action}
       </div>
       <div className="panel-body">{children}</div>
