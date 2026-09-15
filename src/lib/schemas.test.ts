@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SheetPlanRowSchema, parseSheetRow } from "./schemas";
+import { ContentListQuerySchema, SheetPlanRowSchema, parseSheetRow } from "./schemas";
 
 // 계약: _workspace/contract_must-fr001-sheet-sync.md 「유닛 · src/lib/schemas.ts」
 // docs/API_SPEC.md §POST /api/plans/sync 의 SheetPlanRow 계약과 1:1.
@@ -168,5 +168,43 @@ describe("parseSheetRow 골든 테이블", () => {
     c[4] = "jp";
     c[5] = "이벤트형";
     expect(parseSheetRow(c)).toEqual({ ok: false, error: "UNKNOWN_LANG", column: "E" });
+  });
+});
+
+// 계약: FR-009(런 20260915-1754-5568) 「유닛 · src/lib/schemas.ts · ContentListQuerySchema」
+// GET /api/contents?status=&mine=true 의 쿼리 검증. status 는 contentStatusEnum 의 5값
+// 중 하나(옵션), mine 은 쿼리 문자열 "true" 일 때만 true 로 coerce 한다(그 밖의 문자열은
+// 거부 — z.literal("true").optional() 이 계약이 고정한 형태다).
+describe("ContentListQuerySchema", () => {
+  it("status·mine 이 모두 없으면(빈 객체) 통과한다", () => {
+    expect(ContentListQuerySchema.safeParse({}).success).toBe(true);
+  });
+
+  it.each(["draft", "in_review", "approved", "rejected", "published"])(
+    "status='%s' 는 유효한 값이라 통과한다",
+    (status) => {
+      const result = ContentListQuerySchema.safeParse({ status });
+      expect(result.success).toBe(true);
+    },
+  );
+
+  it("mine='true' 는 통과한다", () => {
+    expect(ContentListQuerySchema.safeParse({ mine: "true" }).success).toBe(true);
+  });
+
+  it("status·mine 조합(status='in_review', mine='true')이 모두 유효하면 통과한다", () => {
+    const result = ContentListQuerySchema.safeParse({ status: "in_review", mine: "true" });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data).toEqual({ status: "in_review", mine: "true" });
+    }
+  });
+
+  it("status 가 닫힌 집합 밖 값이면 거부한다", () => {
+    expect(ContentListQuerySchema.safeParse({ status: "unknown_status" }).success).toBe(false);
+  });
+
+  it("mine 이 'true' 가 아닌 문자열(예: 'false')이면 거부한다", () => {
+    expect(ContentListQuerySchema.safeParse({ mine: "false" }).success).toBe(false);
   });
 });

@@ -172,9 +172,13 @@ Finding { ruleId, label, matched: string, index: number, severity, alternative, 
 
 → 200 `{ data: ContentSummary[] }` · `ContentSummary { id, title, status, channelId, lang, publishPlanId, scheduledDate: string|null, authorId, authorName, warnCount, updatedAt, submittedAt }`. 검수함은 `status=in_review` 로 부르고 클라이언트가 `submittedAt` 오름차순.
 
+`mine=true`는 실사용자 식별자가 없어(ADR-004, FR-015 미구현) `role`과 같은 role을 가진 유일한 시드 유저의 `authorId`로 근사한다 — role당 유저가 여러 명이 되면 정확하지 않다(부채).
+
 ### GET `/api/contents/{id}`
 
 → 200 `{ data: ContentDetail }` · 없으면 404.
+
+`link`는 저장되지 않고(스키마에 컬럼 없음) 매 조회마다 `buildUtmLink()`로 재계산한다(ADR-005와 같은 원칙 — 파생값은 저장하지 않는다).
 
 ### PATCH `/api/contents/{id}`
 
@@ -191,6 +195,8 @@ Finding { ruleId, label, matched: string, index: number, severity, alternative, 
 ### POST `/api/contents/{id}/cancel-review`
 
 → 200. `in_review` 외 409. 작성자 본인만(시드 2명이라 역할로 대신: editor 만).
+
+응답은 다른 상태 변경 라우트와 같은 봉투 `{ data: ContentDetail }`다(200).
 
 ### POST `/api/contents/{id}/approve` (admin)
 

@@ -180,3 +180,14 @@ export const LlmBodyDraftSchema = z.object({
 });
 
 export type LlmBodyDraft = z.infer<typeof LlmBodyDraftSchema>;
+
+/**
+ * GET /api/contents 쿼리 검증 — FR-009 계약(run 20260915-1754-5568).
+ * `mine` 은 쿼리 문자열 "true" 일 때만 라우트가 boolean 화해서 서비스 쪽에 넘긴다.
+ */
+export const ContentListQuerySchema = z.object({
+  status: z.enum(["draft", "in_review", "approved", "rejected", "published"]).optional(),
+  mine: z.literal("true").optional(),
+});
+
+export type ContentListQuery = z.infer<typeof ContentListQuerySchema>;
