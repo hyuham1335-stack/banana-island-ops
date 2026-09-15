@@ -1,5 +1,6 @@
 import type { contents } from "@/lib/db/schema";
 import type { ValidationResult } from "@/lib/validator";
+import type { ChannelFormat } from "@/lib/channel-format";
 
 /**
  * FR-009 계약(run 20260915-1754-5568) 「데이터 형태 · ContentDetail / ContentsRow」·
@@ -45,13 +46,15 @@ export interface ContentDetail {
   isExample: boolean;
   historyCount: number;
   autoRegenerated: boolean;
+  channelFormat: ChannelFormat | null;
 }
 
 /**
  * 순수 함수. `row`(contents 전체 컬럼)를 그대로 옮기고, Date 필드는 null 이 아니면
- * ISO 문자열로 바꾼다. `validation`·`link`·`isExample`·`historyCount`·`autoRegenerated`
- * 는 row 에 없거나(계산값) 호출자별로 다르므로 `extra` 로 받는다 — `row.detectedTerms`
- * 는 쓰지 않고 항상 `extra.validation` 을 쓴다(호출자가 최신 재검증 결과를 넘길 수 있게).
+ * ISO 문자열로 바꾼다. `validation`·`link`·`isExample`·`historyCount`·`autoRegenerated`·
+ * `channelFormat` 은 row 에 없거나(계산값) 호출자별로 다르므로 `extra` 로 받는다 —
+ * `row.detectedTerms` 는 쓰지 않고 항상 `extra.validation` 을 쓴다(호출자가 최신
+ * 재검증 결과를 넘길 수 있게).
  */
 export function toContentDetail(
   row: ContentsRow,
@@ -61,6 +64,7 @@ export function toContentDetail(
     isExample: boolean;
     historyCount: number;
     autoRegenerated: boolean;
+    channelFormat: ChannelFormat | null;
   },
 ): ContentDetail {
   return {
@@ -100,5 +104,6 @@ export function toContentDetail(
     isExample: extra.isExample,
     historyCount: extra.historyCount,
     autoRegenerated: extra.autoRegenerated,
+    channelFormat: extra.channelFormat,
   };
 }

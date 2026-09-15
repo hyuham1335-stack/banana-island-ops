@@ -58,6 +58,7 @@ const APPROVE_RESULT = {
   isExample: false,
   historyCount: 1,
   autoRegenerated: false,
+  channelFormat: null,
   exampleRegistered: false,
   exampleSkippedReason: null,
 };
