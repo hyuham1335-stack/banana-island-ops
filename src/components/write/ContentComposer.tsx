@@ -9,7 +9,7 @@ import { PlanBanner, type PlanBannerData } from "@/components/write/PlanBanner";
 import { GenPanel } from "@/components/write/GenPanel";
 import { POST_TYPE_LABELS, productLabel, type PostType } from "@/components/plan-format";
 import type { ChannelOption, ProductOption } from "@/services/content-options";
-import type { ContentDetail } from "@/services/content-generation";
+import type { ContentDetail } from "@/lib/content-detail";
 
 interface TitleItem {
   title: string;
@@ -169,7 +169,7 @@ export function ContentComposer({
         return;
       }
       const content: ContentDetail = json.data;
-      setGen({ phase: "body", items, chosenIndex, content, draftTitle: content.title, draftBody: content.body, edited: false });
+      setGen({ phase: "body", items, chosenIndex, content, draftTitle: content.title, draftBody: content.body ?? "", edited: false });
     } catch {
       setGen({ phase: "body-error", message: "본문 생성 요청을 보내지 못했습니다.", items, chosenIndex, chosenTitle });
     }

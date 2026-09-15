@@ -1,6 +1,7 @@
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import { brandExamples, contents, products, promptTemplates, publishPlans, salesChannels } from "@/lib/db/schema";
+import { toContentDetail, type ContentDetail, type ContentsRow } from "@/lib/content-detail";
 import type { ErrorCode } from "@/lib/http";
 import type { LlmClient } from "@/lib/llm/client";
 import { LlmTimeoutError } from "@/lib/llm/client";
@@ -25,6 +26,10 @@ import {
 import { buildUtmLink } from "@/lib/utm";
 import { validate, type ValidationResult } from "@/lib/validator";
 import { resolveRules } from "@/services/rules";
+
+// 기존 소비자(src/app/api/contents/route.test.ts)가 ContentDetail 을 이 모듈 경로로도
+// import 하므로, lib/content-detail.ts 로 옮긴 뒤에도 재노출해 하위 호환을 유지한다.
+export type { ContentDetail } from "@/lib/content-detail";
 
 /**
  * FR-004 제목+앵글 3안 생성 — docs/API_SPEC.md 136~140행, docs/TRD.md §3 FR-004.
@@ -153,40 +158,6 @@ const LLM_BUDGET_MS = BODY_TOTAL_BUDGET_MS - FINAL_WRITE_RESERVE_MS;
 export const MIN_BODY_REGEN_BUDGET_MS = 5_000;
 const BODY_REGEN_MAX_TIMEOUT_MS = 45_000;
 const BODY_REGEN_SAFETY_MARGIN_MS = 1_000;
-
-export interface ContentDetail {
-  id: number;
-  publishPlanId: number | null;
-  sourceContentId: number | null;
-  productId: number | null;
-  channelId: number;
-  lang: "ko" | "en";
-  postType: CreateContentInput["postType"];
-  targetPersona: string;
-  status: "draft";
-  title: string;
-  body: string;
-  regenCount: number;
-  link: string;
-  validation: ValidationResult;
-  ruleSnapshot: { ruleIds: number[]; version: string; exampleIds: number[] };
-  sentPrompt: string;
-  model: string;
-  rejectReason: null;
-  publishedUrl: null;
-  urlCheck: null;
-  authorId: null;
-  reviewerId: null;
-  publisherId: null;
-  submittedAt: null;
-  reviewedAt: null;
-  publishedAt: null;
-  updatedAt: string;
-  createdAt: string;
-  isExample: false;
-  historyCount: 0;
-  autoRegenerated: boolean;
-}
 
 // Neon HTTP 드라이버가 던지는 에러 객체의 code 필드로 unique_violation(23505) 을 식별한다
 // (표준 Postgres 에러코드, 드라이버 비특정적).
@@ -553,40 +524,46 @@ export async function createContentWithBody(
       resultAutoRegenerated = resultRegenCount > 0;
     }
 
-    // 20. 응답 조립.
-    const data: ContentDetail = {
+    // 20. 응답 조립 — contents 전체 컬럼을 채운 row 를 만든 뒤 toContentDetail 로 위임한다.
+    const row: ContentsRow = {
       id: contentId,
       publishPlanId: input.publishPlanId,
       sourceContentId: resultSourceContentId,
       productId: input.productId,
       channelId: input.channelId,
+      templateId: template.id,
+      authorId: null,
+      reviewerId: null,
+      publisherId: null,
       lang: input.lang,
       postType: input.postType,
       targetPersona: input.targetPersona,
       status: "draft",
       title: input.title,
+      titleCandidates: input.titleCandidates,
       body: resultBody,
       regenCount: resultRegenCount,
-      link,
-      validation: resultValidation,
       ruleSnapshot: resultRuleSnapshot,
+      detectedTerms: resultValidation,
       sentPrompt: resultSentPrompt,
       model: resultModel,
       rejectReason: null,
       publishedUrl: null,
       urlCheck: null,
-      authorId: null,
-      reviewerId: null,
-      publisherId: null,
       submittedAt: null,
       reviewedAt: null,
       publishedAt: null,
-      updatedAt: resultUpdatedAt.toISOString(),
-      createdAt: createdAtVal.toISOString(),
+      updatedAt: resultUpdatedAt,
+      createdAt: createdAtVal,
+    };
+
+    const data: ContentDetail = toContentDetail(row, {
+      validation: resultValidation,
+      link,
       isExample: false,
       historyCount: 0,
       autoRegenerated: resultAutoRegenerated,
-    };
+    });
 
     return { ok: true, data };
   } catch (err) {

@@ -656,7 +656,7 @@ describe("createContentWithBody", () => {
     expect(result.data.link).toBe(expectedLink);
 
     // exampleIds — brand_examples 조회 결과의 id 가 ruleSnapshot 에 그대로 매핑된다.
-    expect(result.data.ruleSnapshot.exampleIds).toEqual([1, 2]);
+    expect(result.data.ruleSnapshot!.exampleIds).toEqual([1, 2]);
 
     expect(insert).toHaveBeenCalledTimes(1);
     expect(update).toHaveBeenCalledTimes(1); // 최종 UPDATE 1회(신규 경로엔 재시도 UPDATE 없음)

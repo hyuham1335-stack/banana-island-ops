@@ -1,12 +1,12 @@
 import { sql } from "drizzle-orm";
 import { getDb } from "../src/lib/db/client";
-import { brandRules, products, salesChannels, users } from "../src/lib/db/schema";
+import { brandRules, products, promptTemplates, salesChannels, users } from "../src/lib/db/schema";
 
 /**
- * Must 기능(FR-001·002·003) 최소 마스터 데이터 시드.
+ * Must 기능(FR-001·002·003) 최소 마스터 데이터 시드 + FR-005 테스트용 prompt_templates.
  * 값의 출처는 목업 bananaislandops_2.html — 자세한 매핑은 계획 문서 참고.
  * users·products·sales_channels 는 unique 키로 재실행 안전(onConflictDoNothing).
- * brand_rules 는 자연키가 없어 테이블이 비어 있을 때만 넣는다.
+ * brand_rules·prompt_templates 는 자연키가 없어 테이블이 비어 있을 때만 넣는다.
  */
 
 async function seedUsers(db: ReturnType<typeof getDb>) {
@@ -392,12 +392,66 @@ async function seedBrandRules(db: ReturnType<typeof getDb>) {
   console.log(`brand_rules: ${rows.length}행 삽입`);
 }
 
+async function seedPromptTemplates(db: ReturnType<typeof getDb>) {
+  const [{ count }] = await db.select({ count: sql<number>`count(*)::int` }).from(promptTemplates);
+  if (count > 0) {
+    console.log(`prompt_templates: 이미 ${count}행 있음 — 스킵`);
+    return;
+  }
+
+  const channelRows = await db
+    .select({ id: salesChannels.id, channelCode: salesChannels.channelCode })
+    .from(salesChannels);
+  const channelIdByCode = new Map(channelRows.map((r) => [r.channelCode, r.id]));
+
+  const naverId = channelIdByCode.get("naver-blog");
+  const instaId = channelIdByCode.get("instagram");
+  const shopifyId = channelIdByCode.get("shopify-blog");
+  const amazonId = channelIdByCode.get("amazon-detail");
+
+  if (!naverId || !instaId || !shopifyId || !amazonId) {
+    throw new Error("prompt_templates 시드 실패: 선행 seedSalesChannels 결과를 찾을 수 없음");
+  }
+
+  const rows = await db
+    .insert(promptTemplates)
+    .values([
+      {
+        channelId: naverId,
+        lang: "ko",
+        name: "네이버 블로그 제품 소개",
+        body: "{타깃}에게 {제품명}을(를) 소개하는 블로그 글을 쓴다. 제품의 특징과 활용 레시피를 자연스럽게 풀어내고, 글 마지막 문단에 구매 링크 {링크}를 안내한다.",
+      },
+      {
+        channelId: instaId,
+        lang: "ko",
+        name: "인스타그램 제품 소개 캡션",
+        body: "{타깃}의 시선을 끌 {제품명} 소개 캡션을 쓴다. 첫 문장에서 바로 관심을 끌고, 구매는 프로필 링크(바이오)에서 가능하다고 안내한다.",
+      },
+      {
+        channelId: shopifyId,
+        lang: "en",
+        name: "Shopify 제품 소개 블로그",
+        body: "Write a blog post introducing {제품명} to {타깃}. Explain the product's key features and how to use it, then naturally include the purchase link {링크} near the end.",
+      },
+      {
+        channelId: amazonId,
+        lang: "en",
+        name: "Amazon 제품 상세 설명",
+        body: "Write an Amazon product detail description for {제품명} for {타깃}. Focus on concrete features, ingredients, and usage instructions. Do not reference any external link in the text.",
+      },
+    ])
+    .returning({ id: promptTemplates.id });
+  console.log(`prompt_templates: ${rows.length}행 삽입`);
+}
+
 async function main() {
   const db = getDb();
   await seedUsers(db);
   await seedProducts(db);
   await seedSalesChannels(db);
   await seedBrandRules(db);
+  await seedPromptTemplates(db);
 }
 
 main()
