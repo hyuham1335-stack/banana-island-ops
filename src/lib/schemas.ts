@@ -222,8 +222,15 @@ export type RejectInput = z.infer<typeof RejectInputSchema>;
 /**
  * POST /api/contents/{id}/publish 요청 검증 — FR-013 계약(_workspace/contract_fr-013-publish.md).
  */
+// .url() 만으로는 javascript:·data:·file: 등 임의 스킴을 허용한다(07 code-review 수리) —
+// 이 값은 저장 후 화면에 링크로 다시 노출되므로(FR-013 US-013) http/https 만 받는다.
 export const PublishInputSchema = z.object({
-  publishedUrl: z.string().trim().url().optional(),
+  publishedUrl: z
+    .string()
+    .trim()
+    .url()
+    .refine((v) => /^https?:\/\//i.test(v), "URL은 http 또는 https 여야 합니다.")
+    .optional(),
 });
 
 export type PublishInput = z.infer<typeof PublishInputSchema>;

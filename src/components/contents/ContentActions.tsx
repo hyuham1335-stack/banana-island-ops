@@ -121,7 +121,8 @@ export function ContentActions({
     status !== "rejected" &&
     status !== "in_review" &&
     status !== "approved" &&
-    !approveResult
+    !approveResult &&
+    !publishResult
   ) {
     return null;
   }
@@ -190,11 +191,16 @@ export function ContentActions({
           <Button small disabled={state.pending} onClick={() => void runPublish()}>
             발행 완료
           </Button>
-          {publishResult?.urlCheck === "ok" ? <Notice variant="ok">URL 접속을 확인했습니다.</Notice> : null}
-          {publishResult?.urlCheck === "unreachable" ? (
+        </div>
+      ) : null}
+
+      {publishResult ? (
+        <>
+          {publishResult.urlCheck === "ok" ? <Notice variant="ok">URL 접속을 확인했습니다.</Notice> : null}
+          {publishResult.urlCheck === "unreachable" ? (
             <Notice variant="warn">URL 에 접속할 수 없습니다. 링크를 다시 확인하세요.</Notice>
           ) : null}
-        </div>
+        </>
       ) : null}
 
       {status === "draft" || status === "rejected" ? (

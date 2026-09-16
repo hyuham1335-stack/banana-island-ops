@@ -81,13 +81,23 @@ export function createUrlChecker(): UrlChecker {
       // DNS 조회 기반 재검증(05 라운드2 sec F-4) — 호스트 문자열 검사만으로는 사설 IP로
       // resolve되는 도메인(DNS 리바인딩)을 못 잡는다. fetch 전에 실제 해석된 IP 전부를
       // 조회해 그중 하나라도 사설/루프백/링크로컬/미지정 대역이면 fetch를 시도하지 않는다.
+      // dns.lookup 자체에는 타임아웃이 없어(07 code-review 수리) 3초로 별도 제한한다 —
+      // 없으면 응답 없는 네임서버가 라우트의 maxDuration(15초) 예산을 다 써버릴 수 있다.
+      let dnsTimer: ReturnType<typeof setTimeout> | undefined;
       try {
-        const addresses = await dns.lookup(hostname, { all: true });
+        const addresses = await Promise.race([
+          dns.lookup(hostname, { all: true }),
+          new Promise<never>((_, reject) => {
+            dnsTimer = setTimeout(() => reject(new Error("dns_timeout")), 3000);
+          }),
+        ]);
         if (addresses.some((address) => isPrivateHost(address.address))) {
           return "unreachable";
         }
       } catch {
         return "unreachable";
+      } finally {
+        clearTimeout(dnsTimer);
       }
 
       try {
