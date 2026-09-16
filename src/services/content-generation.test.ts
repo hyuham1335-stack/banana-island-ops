@@ -1995,7 +1995,7 @@ describe("editContent", () => {
   });
 
   it("동시성 회귀: regenerateContentBody 가 먼저 커밋해 regenCount 가 SELECT 시점과 달라지면(가짜 db.update 가 0행 반환) title-only editContent 도 409 INVALID_TRANSITION 을 돌려주고 이력은 기록되지 않는다(regenCount 만 바뀌고 title·body 는 그대로인 경합 — 05 code-review major 수리가 막는 케이스)", async () => {
-    const row = { ...EDIT_BASE_ROW, regenCount: 1 }; // SELECT 시점 값 — 이미 한 번 regenerateContentBody 가 지나간 뒤라고 가정
+    const row: Record<string, unknown> = { ...EDIT_BASE_ROW, regenCount: 1 }; // SELECT 시점 값 — 이미 한 번 regenerateContentBody 가 지나간 뒤라고 가정
     const { db, insert, updateWhereCalls } = createEditDbMock({
       contentRows: [row],
       ruleRows: [],
