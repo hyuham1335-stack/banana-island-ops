@@ -389,7 +389,13 @@ export async function transition(
         ? deps.db
             .update(contents)
             .set({ status: rule.to, updatedAt: sql`now()`, submittedAt: sql`now()`, detectedTerms: validation })
-            .where(and(eq(contents.id, contentId), eq(contents.status, row.status)))
+            // regenCount 도 가드에 넣는다(07 code-review 수리) — submit 은 상태를 바꾸지만
+            // FR-007 재생성은 상태를 안 바꾸고 body 만 바꾼다. status 가드만 쓰면, 이
+            // SELECT(위 279행)로 읽은 row.body 로 계산한 validation 이 그 사이 다른
+            // 요청이 regenerateContentBody 로 body 를 바꾼 뒤에도 그대로 커밋돼(status
+            // 는 여전히 draft 라 가드를 통과) 실제 본문과 다른 detectedTerms 가
+            // in_review 상태에 저장될 수 있었다(차단어가 남은 본문이 검수로 새는 경로).
+            .where(and(eq(contents.id, contentId), eq(contents.status, row.status), eq(contents.regenCount, row.regenCount)))
             .returning(returningColumns)
         : action === "cancel_review"
           ? deps.db

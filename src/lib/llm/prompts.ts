@@ -173,8 +173,10 @@ export function buildBodyRegenPrompt(originalBody: string, blocks: Finding[]): s
  * "전반적으로 다듬어 다시 작성" 문구로 대체한다(계약 「유닛」).
  */
 export function buildBodyInstructionRegenPrompt(originalBody: string, instruction: string | undefined): string {
-  const instructionText =
-    instruction !== undefined ? escapeUserInputValue(instruction) : "(지시 없음 — 전반적으로 다듬어 다시 작성)";
+  // 07 code-review 수리: 공백만 있는 instruction(zod 가 trim 만 하고 min(1) 은 없어
+  // 빈 문자열 "" 이 통과할 수 있다)을 undefined 와 구분 없이 "지시 없음"으로 접는다 —
+  // truthy 검사라 ""·undefined 둘 다 대체 문구를 쓴다.
+  const instructionText = instruction ? escapeUserInputValue(instruction) : "(지시 없음 — 전반적으로 다듬어 다시 작성)";
 
   return [
     "아래 본문을 사용자 지시에 따라 다시 작성한다.",
