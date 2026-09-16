@@ -648,3 +648,189 @@ export async function approveContent(
     };
   }
 }
+
+/**
+ * FR-014 발행 콘텐츠의 새 버전 생성 — 계약(run 20260917-0028-40dc,
+ * _workspace/contract_fr-014-new-version.md) 「유닛 · createNewVersion」.
+ *
+ * 순서가 이 계약의 핵심 불변식이다: 3단계(resolveRules/validate — 실패 가능·순수 조회)가
+ * 4단계(원본 publish_plan_id 를 비우는 낙관적 잠금 UPDATE — 되돌릴 수 없는 첫 쓰기)보다
+ * 반드시 먼저 실행된다. resolveRules 가 실패하면 이 시점까지 DB 에 아무 쓰기도 없었으므로
+ * 원본은 완전히 그대로 남는다.
+ */
+export async function createNewVersion(
+  deps: { db: Db; productBaseUrl: string },
+  contentId: number,
+): Promise<Result<ContentDetail>> {
+  try {
+    const selectQuery = deps.db.select().from(contents);
+    selectQuery.where(eq(contents.id, contentId));
+    const rows = await selectQuery;
+    const row = rows[0];
+
+    if (!row) {
+      return {
+        ok: false,
+        error: {
+          code: "NOT_FOUND",
+          message: "콘텐츠를 찾을 수 없습니다.",
+          details: { resource: "content", id: contentId },
+        },
+      };
+    }
+
+    if (row.status !== "published") {
+      return {
+        ok: false,
+        error: {
+          code: "INVALID_TRANSITION",
+          message: "현재 상태에서 허용되지 않는 전이입니다.",
+          details: { from: row.status, action: "new_version" },
+        },
+      };
+    }
+
+    // 3. 먼저 실행 — 실패 가능·순수 조회. 이 시점까지 DB 에 아무 쓰기도 없다.
+    const rulesResult = await resolveRules(deps, {
+      channelId: row.channelId,
+      lang: row.lang,
+      productId: row.productId ?? undefined,
+    });
+    if (!rulesResult.ok) {
+      return { ok: false, error: rulesResult.error };
+    }
+    const validation = validate(row.body ?? "", { must: rulesResult.data.must, ban: rulesResult.data.ban });
+
+    // 4. 그 다음 — 되돌릴 수 없는 첫 쓰기. publishPlanId 가 null 이든 아니든 항상 이 UPDATE
+    // 를 실행한다(값이 없어도 status='published' 자체가 동시 호출을 가르는 게이트가 된다).
+    // bodyUnchangedGuard 와 같은 이유로 null 분기가 필요하다 — eq(col, null) 은 SQL 에서
+    // x = NULL 이라 항상 UNKNOWN 이 되어 0행을 반환한다.
+    const publishPlanIdGuard =
+      row.publishPlanId === null ? isNull(contents.publishPlanId) : eq(contents.publishPlanId, row.publishPlanId);
+    const lockUpdateQuery = deps.db
+      .update(contents)
+      .set({ publishPlanId: null, updatedAt: sql`now()` })
+      .where(and(eq(contents.id, contentId), eq(contents.status, "published"), publishPlanIdGuard))
+      .returning({ id: contents.id });
+    const lockUpdateRows = await lockUpdateQuery;
+
+    if (lockUpdateRows.length === 0) {
+      return {
+        ok: false,
+        error: {
+          code: "INVALID_TRANSITION",
+          message: "현재 상태에서 허용되지 않는 전이입니다.",
+          details: { from: row.status, action: "new_version" },
+        },
+      };
+    }
+
+    // 5. 새 행 INSERT — publishPlanId 는 4단계에서 비우기 전의 원래 값(이 새 행으로
+    // "이전"됨을 의미), titleCandidates 는 복사하지 않는다(FR-004 제목 생성을 거치지 않은
+    // 이 경로에는 의미가 없다), body/ruleSnapshot/sentPrompt/model 은 재생성하지 않고 원본
+    // 그대로 복사, detectedTerms 는 3단계 결과, 나머지 워크플로 필드는 전부 리셋한다.
+    const insertValues = {
+      sourceContentId: contentId,
+      publishPlanId: row.publishPlanId,
+      productId: row.productId,
+      channelId: row.channelId,
+      templateId: row.templateId,
+      authorId: row.authorId,
+      lang: row.lang,
+      postType: row.postType,
+      targetPersona: row.targetPersona,
+      status: "draft" as const,
+      title: `${row.title} (v2)`,
+      titleCandidates: null,
+      body: row.body,
+      ruleSnapshot: row.ruleSnapshot,
+      sentPrompt: row.sentPrompt,
+      model: row.model,
+      detectedTerms: validation,
+      regenCount: 0,
+      rejectReason: null,
+      publishedUrl: null,
+      urlCheck: null,
+      submittedAt: null,
+      reviewedAt: null,
+      publishedAt: null,
+      reviewerId: null,
+      publisherId: null,
+    };
+    let insertedRows: { id: number; createdAt: Date; updatedAt: Date }[];
+    try {
+      const insertQuery = deps.db
+        .insert(contents)
+        .values(insertValues)
+        .returning({ id: contents.id, createdAt: contents.createdAt, updatedAt: contents.updatedAt });
+      insertedRows = await insertQuery;
+    } catch (err) {
+      // 보상: Neon HTTP 드라이버는 다중 문 트랜잭션을 지원하지 않아 4단계 UPDATE(원본의
+      // publish_plan_id 를 비움)는 이미 커밋된 채 되돌아가지 않는다. INSERT 가 실패하면
+      // 원본의 publish_plan_id 를 4단계 이전 값(row.publishPlanId)으로 최선 노력 복구한다.
+      // status 는 이 함수에서 건드리지 않았으므로 'published' 그대로다 — 복구 대상은
+      // publish_plan_id 하나뿐이다(id 만으로 WHERE 하기에 충분). 보상 자체가 실패해도
+      // 흡수한다 — 이미 실패 경로이므로 추가로 던지지 않는다.
+      if (row.publishPlanId !== null) {
+        try {
+          await deps.db
+            .update(contents)
+            .set({ publishPlanId: row.publishPlanId, updatedAt: sql`now()` })
+            .where(eq(contents.id, contentId));
+        } catch (compErr) {
+          console.error(
+            JSON.stringify({
+              event: "content_new_version_plan_restore_failed",
+              contentId,
+              message: compErr instanceof Error ? compErr.message : String(compErr),
+            }),
+          );
+        }
+      }
+      console.error(
+        JSON.stringify({
+          event: "content_new_version_insert_failed",
+          contentId,
+          message: err instanceof Error ? err.message : String(err),
+        }),
+      );
+      return { ok: false, error: { code: "INTERNAL", message: "새 버전 생성 중 오류가 발생했습니다." } };
+    }
+    const inserted = insertedRows[0];
+
+    // 7. toContentDetail 에 넘길 ContentsRow 를 명시적으로 조립한다 — row(원본)를 그대로
+    // 스프레드하지 않는다(대부분의 워크플로 필드가 리셋되므로). 5단계에서 INSERT 한 값
+    // 그대로 채우고 id·createdAt·updatedAt 은 RETURNING 값을 쓴다.
+    const newRow: ContentsRow = {
+      id: inserted.id,
+      ...insertValues,
+      createdAt: inserted.createdAt,
+      updatedAt: inserted.updatedAt,
+    };
+
+    // 6. 발행 링크 재계산.
+    const link = await resolveContentLink(deps, newRow);
+
+    const data = toContentDetail(newRow, {
+      validation,
+      link,
+      isExample: false,
+      historyCount: 0,
+      autoRegenerated: false,
+      // draft 는 항상 null — 기존 파일 규칙 그대로(resolveChannelFormat 은 approved 상태
+      // 에서만 계산한다. getContentDetail 179행 참고).
+      channelFormat: null,
+    });
+
+    return { ok: true, data };
+  } catch (err) {
+    console.error(
+      JSON.stringify({
+        event: "content_new_version_failed",
+        contentId,
+        message: err instanceof Error ? err.message : String(err),
+      }),
+    );
+    return { ok: false, error: { code: "INTERNAL", message: "새 버전 생성 중 오류가 발생했습니다." } };
+  }
+}

@@ -139,11 +139,30 @@ export function ContentActions({
     }
   }
 
+  // FR-014 — 다른 run* 과 달리 router.refresh() 가 아니라 새 id 로 이동한다(새 리소스가
+  // 만들어졌으므로).
+  async function runNewVersion() {
+    setState({ pending: true, error: null });
+    try {
+      const res = await fetch(`/api/contents/${contentId}/new-version`, { method: "POST" });
+      const json = await res.json();
+      if (!res.ok) {
+        setState({ pending: false, error: json.error?.message ?? "요청을 처리하지 못했습니다." });
+        return;
+      }
+      setState({ pending: false, error: null });
+      router.push(`/contents/${json.data.id}`);
+    } catch {
+      setState({ pending: false, error: "요청을 보내지 못했습니다." });
+    }
+  }
+
   if (
     status !== "draft" &&
     status !== "rejected" &&
     status !== "in_review" &&
     status !== "approved" &&
+    status !== "published" &&
     !approveResult &&
     !publishResult
   ) {
@@ -224,6 +243,12 @@ export function ContentActions({
             <Notice variant="warn">URL 에 접속할 수 없습니다. 링크를 다시 확인하세요.</Notice>
           ) : null}
         </>
+      ) : null}
+
+      {status === "published" ? (
+        <Button small disabled={state.pending} onClick={() => void runNewVersion()}>
+          새 버전으로 재생성
+        </Button>
       ) : null}
 
       {status === "draft" || status === "rejected" ? (
