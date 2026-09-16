@@ -980,3 +980,36 @@ details pre {
   padding: 10px 12px;
   margin-top: 8px;
 }
+
+/* ---- 홈 대시보드 (FR-016) ------------------------------------------------------- */
+
+.kpi-band {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  padding: 18px;
+  margin-bottom: 18px;
+}
+
+.kpi-now {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--leaf);
+}
+
+.kpi-label {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.table {
+  width: 100%;
+}
+
+.table td[colspan] {
+  text-align: center;
+  color: var(--muted);
+}

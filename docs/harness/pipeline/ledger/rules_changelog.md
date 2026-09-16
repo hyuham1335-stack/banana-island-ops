@@ -17,3 +17,5 @@
 | 2026-09-16 | 20260916-0206-6da3 | transition-action-coverage-stale | TEST_MISSING_FAILURE_PATH | prose | 10회 / 2런 | new | skipped | 해당 없음 | - |
 | 2026-09-16 | 20260916-1054-e7ff | maxduration-route-config-not-out-of-contract | NAMING | lint | 7회 / 5런 | new | skipped | 미측정 | - |
 | 2026-09-16 | 20260916-1054-e7ff | transition-action-coverage-stale | TEST_MISSING_FAILURE_PATH | prose | 12회 / 3런 | new | skipped | 해당 없음 | - |
+| 2026-09-16 | 20260916-1347-f193 | maxduration-route-config-not-out-of-contract | NAMING | lint | 8회 / 6런 | new | skipped | 미측정 | - |
+| 2026-09-16 | 20260916-1347-f193 | transition-action-coverage-stale | TEST_MISSING_FAILURE_PATH | prose | 15회 / 4런 | new | skipped | 해당 없음 | - |
