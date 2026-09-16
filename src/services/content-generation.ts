@@ -1,11 +1,20 @@
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
-import { brandExamples, contents, products, promptTemplates, publishPlans, salesChannels } from "@/lib/db/schema";
+import {
+  brandExamples,
+  contentHistory,
+  contents,
+  products,
+  promptTemplates,
+  publishPlans,
+  salesChannels,
+} from "@/lib/db/schema";
 import { toContentDetail, type ContentDetail, type ContentsRow } from "@/lib/content-detail";
 import type { ErrorCode } from "@/lib/http";
 import type { LlmClient } from "@/lib/llm/client";
 import { LlmTimeoutError } from "@/lib/llm/client";
 import {
+  buildBodyInstructionRegenPrompt,
   buildBodyRegenPrompt,
   buildBodySystemPrompt,
   buildBodyUserPrompt,
@@ -21,10 +30,12 @@ import {
   LlmTitleItemSchema,
   type CreateContentInput,
   type LlmTitleItem,
+  type RegenerateInput,
   type TitleRequest,
 } from "@/lib/schemas";
 import { buildUtmLink } from "@/lib/utm";
 import { validate, type ValidationResult } from "@/lib/validator";
+import { resolveContentLink, TRANSITIONS } from "@/services/content-workflow";
 import { resolveRules } from "@/services/rules";
 
 // 기존 소비자(src/app/api/contents/route.test.ts)가 ContentDetail 을 이 모듈 경로로도
@@ -580,5 +591,241 @@ export async function createContentWithBody(
       }),
     );
     return { ok: false, error: { code: "INTERNAL", message: "본문 생성 중 오류가 발생했습니다." } };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// FR-007 재생성(지시문 포함) — regenerateContentBody
+// ---------------------------------------------------------------------------
+
+/**
+ * FR-007 지시문 기반 재생성 — 계약(_workspace/runs/20260916-1614-ad59/01_plan.md).
+ * draft/rejected 상태의 콘텐츠 본문을 사용자 지시문(선택) 기반으로 다시 생성한다.
+ * BODY_TOTAL_BUDGET_MS 등 시간 예산 상수는 createContentWithBody 와 공유한다(라우트
+ * 예산이 둘 다 60초로 같다).
+ *
+ * 저장 순서(ADR-002, 반드시 이 순서): 낙관적 잠금 UPDATE(status·regenCount 둘 다 토큰)를
+ * 먼저 실행하고, 그것이 성공한 뒤에만 content_history 에 UPDATE 전 값을 insert한다.
+ * UPDATE 가 0행이면 이력을 쓰지 않고 INVALID_TRANSITION 을 반환한다 — 완전한 미변경 보장.
+ */
+export async function regenerateContentBody(
+  deps: { db: Db; llm: LlmClient; model: string; productBaseUrl: string },
+  contentId: number,
+  input: RegenerateInput,
+): Promise<Result<ContentDetail>> {
+  const startedAt = Date.now();
+
+  try {
+    const selectQuery = deps.db.select().from(contents);
+    selectQuery.where(eq(contents.id, contentId));
+    const rows = await selectQuery;
+    const row = rows[0];
+
+    if (!row) {
+      return {
+        ok: false,
+        error: {
+          code: "NOT_FOUND",
+          message: "콘텐츠를 찾을 수 없습니다.",
+          details: { resource: "content", id: contentId },
+        },
+      };
+    }
+
+    if (!TRANSITIONS.submit.from.includes(row.status)) {
+      return {
+        ok: false,
+        error: {
+          code: "INVALID_TRANSITION",
+          message: "현재 상태에서는 다시 만들 수 없습니다.",
+          details: { from: row.status },
+        },
+      };
+    }
+
+    // 규칙 병합 조회 — 실패는 그대로 전파한다.
+    const rulesResult = await resolveRules(
+      { db: deps.db },
+      { channelId: row.channelId, lang: row.lang, productId: row.productId ?? undefined },
+    );
+    if (!rulesResult.ok) {
+      return { ok: false, error: rulesResult.error };
+    }
+    const rules = rulesResult.data;
+
+    // 활성 브랜드 예시 최대 3개 — createContentWithBody 와 같은 조건.
+    const examplesQuery = deps.db
+      .select({ id: brandExamples.id, summary: brandExamples.summary })
+      .from(brandExamples);
+    examplesQuery.where(
+      and(
+        eq(brandExamples.channelId, row.channelId),
+        eq(brandExamples.lang, row.lang),
+        eq(brandExamples.isActive, true),
+      ),
+    );
+    examplesQuery.orderBy(desc(brandExamples.createdAt));
+    examplesQuery.limit(3);
+    const examples = await examplesQuery;
+
+    const system = buildBodySystemPrompt(rules, examples.map((e) => ({ summary: e.summary })));
+    const user = buildBodyInstructionRegenPrompt(row.body ?? "", input.instruction);
+
+    // 1차 LLM 호출 예산.
+    const remainingForInitial = LLM_BUDGET_MS - (Date.now() - startedAt);
+    if (remainingForInitial <= 0) {
+      return {
+        ok: false,
+        error: { code: "LLM_TIMEOUT", message: "본문 재생성이 시간 초과되었습니다.", details: { contentId } },
+      };
+    }
+
+    // 1차 LLM 호출 — 실패/타임아웃은 DB 에 아무것도 쓰지 않고 그대로 반환한다(이전 본문 유지).
+    let draft: { body: string };
+    try {
+      draft = await deps.llm.generateJson(
+        system,
+        user,
+        LlmBodyDraftSchema,
+        Math.min(INITIAL_BODY_TIMEOUT_MS, remainingForInitial),
+        "body_regenerate_instruction",
+      );
+    } catch (err) {
+      if (err instanceof LlmTimeoutError) {
+        return {
+          ok: false,
+          error: { code: "LLM_TIMEOUT", message: "본문 재생성이 시간 초과되었습니다.", details: { contentId } },
+        };
+      }
+      return {
+        ok: false,
+        error: { code: "LLM_FAILED", message: "본문 재생성에 실패했습니다.", details: { contentId } },
+      };
+    }
+
+    // 하드 룰 검증 + FR-006 자동 재생성 1회(위반 목록 기반 buildBodyRegenPrompt 재사용 —
+    // 지시문 기반 프롬프트가 아니다). 재시도 자체의 실패/타임아웃은 흡수한다.
+    let validation = validate(draft.body, { must: rules.must, ban: rules.ban });
+    let finalBody = draft.body;
+    let finalUser = user;
+    let autoRegenerated = false;
+
+    if (validation.blocks.length > 0) {
+      const elapsedMs = Date.now() - startedAt;
+      const remaining = LLM_BUDGET_MS - elapsedMs;
+      if (remaining >= MIN_BODY_REGEN_BUDGET_MS) {
+        const regenTimeoutMs = Math.min(BODY_REGEN_MAX_TIMEOUT_MS, remaining - BODY_REGEN_SAFETY_MARGIN_MS);
+        const regenUser = buildBodyRegenPrompt(finalBody, validation.blocks);
+        try {
+          const regenerated = await deps.llm.generateJson(
+            system,
+            regenUser,
+            LlmBodyDraftSchema,
+            regenTimeoutMs,
+            "body_regenerate_auto",
+          );
+          finalBody = regenerated.body;
+          finalUser = regenUser;
+          autoRegenerated = true;
+          validation = validate(finalBody, { must: rules.must, ban: rules.ban });
+        } catch {
+          // 재생성 실패는 흡수한다 — 원래 finalBody·validation 유지, 요청은 계속 성공.
+        }
+      }
+    }
+
+    const sentPrompt = combineSentPrompt(system, finalUser);
+    const exampleIds = examples.map((e) => e.id);
+    const ruleSnapshot = { ruleIds: rules.appliedRuleIds, version: rules.version, exampleIds };
+
+    // resolveContentLink 는 UPDATE 전 row(id·channelId·productId)만 참조하므로 UPDATE 보다
+    // 먼저 호출한다(05 code-review 수리 F-1 CONTRACT_MISMATCH/TX_BOUNDARY) — UPDATE·이력
+    // INSERT 가 둘 다 성공한 뒤에 호출하면, 이 호출이 던질 때 이미 커밋된 쓰기가 있는데도
+    // INTERNAL 을 반환해 "이전 본문 유지" 보장이 깨진다.
+    const link = await resolveContentLink(deps, row);
+
+    // 낙관적 잠금 UPDATE — status·regenCount 둘 다 토큰(계약: status 만으로는 동시 요청을
+    // 못 막는다). 0행이면 이력을 쓰지 않고 즉시 반환한다.
+    const lockedUpdateRows = await deps.db
+      .update(contents)
+      .set({
+        body: finalBody,
+        sentPrompt,
+        model: deps.model,
+        ruleSnapshot,
+        detectedTerms: validation,
+        regenCount: sql`${contents.regenCount} + 1`,
+        updatedAt: sql`now()`,
+      })
+      .where(
+        and(
+          eq(contents.id, contentId),
+          eq(contents.status, row.status),
+          eq(contents.regenCount, row.regenCount),
+        ),
+      )
+      .returning({ updatedAt: contents.updatedAt, regenCount: contents.regenCount });
+
+    const updated = lockedUpdateRows[0];
+    if (!updated) {
+      return {
+        ok: false,
+        error: {
+          code: "INVALID_TRANSITION",
+          message: "다른 요청이 먼저 이 콘텐츠를 변경했습니다.",
+          details: { from: row.status },
+        },
+      };
+    }
+
+    // UPDATE 성공 확인 뒤에만 이력을 쓴다 — UPDATE 전 값(row.*)을 저장한다. versionNo 는
+    // TOCTOU 방지를 위해 INSERT 문 안의 서브쿼리로 계산한다(별도 SELECT count(*) 아님).
+    const historyInsertRows = await deps.db
+      .insert(contentHistory)
+      .values({
+        contentId,
+        versionNo: sql<number>`(select coalesce(max(version_no), 0) + 1 from content_history where content_id = ${contentId})`,
+        reason: "regenerate",
+        title: row.title,
+        body: row.body,
+        sentPrompt: row.sentPrompt,
+        detectedTerms: row.detectedTerms,
+        changedBy: null,
+      })
+      .returning({ versionNo: contentHistory.versionNo });
+    const historyCount = historyInsertRows[0]?.versionNo ?? 0;
+
+    const updatedRow: ContentsRow = {
+      ...row,
+      body: finalBody,
+      sentPrompt,
+      model: deps.model,
+      ruleSnapshot,
+      detectedTerms: validation,
+      regenCount: updated.regenCount,
+      updatedAt: updated.updatedAt,
+    };
+
+    // channelFormat 은 항상 null — 재생성은 draft/rejected 에서만 허용되고 channelFormat 은
+    // approved 상태에서만 계산되는 기존 규칙 그대로다.
+    const data = toContentDetail(updatedRow, {
+      validation,
+      link,
+      isExample: false,
+      historyCount,
+      autoRegenerated,
+      channelFormat: null,
+    });
+
+    return { ok: true, data };
+  } catch (err) {
+    console.error(
+      JSON.stringify({
+        event: "content_regenerate_failed",
+        contentId,
+        message: err instanceof Error ? err.message : String(err),
+      }),
+    );
+    return { ok: false, error: { code: "INTERNAL", message: "본문 재생성 중 오류가 발생했습니다." } };
   }
 }

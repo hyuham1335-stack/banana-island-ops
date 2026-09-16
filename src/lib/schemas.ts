@@ -234,3 +234,12 @@ export const PublishInputSchema = z.object({
 });
 
 export type PublishInput = z.infer<typeof PublishInputSchema>;
+
+/**
+ * POST /api/contents/{id}/regenerate 요청 검증 — FR-007 계약(run 20260916-1614-ad59).
+ */
+export const RegenerateInputSchema = z.object({
+  instruction: z.string().trim().max(500).optional(),
+});
+
+export type RegenerateInput = z.infer<typeof RegenerateInputSchema>;
