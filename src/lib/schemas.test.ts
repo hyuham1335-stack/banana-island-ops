@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   ApproveInputSchema,
   ContentListQuerySchema,
+  EditContentInputSchema,
   RejectInputSchema,
   SetRoleInputSchema,
   SheetPlanRowSchema,
@@ -293,5 +294,56 @@ describe("SetRoleInputSchema", () => {
 
   it("role 필드가 없으면 거부한다", () => {
     expect(SetRoleInputSchema.safeParse({}).success).toBe(false);
+  });
+});
+
+// 계약: FR-008(_workspace/contract_fr-008-direct-edit.md) 「데이터 형태 ·
+// EditContentInput { title?: string(1~200, trim), body?: string(1~12000, trim) }」
+// title·body 둘 다 optional 이지만 최소 하나는 있어야 한다(.refine) — 완전한 no-op PATCH 를 막는다.
+describe("EditContentInputSchema", () => {
+  it("title 만 있으면 통과한다", () => {
+    const result = EditContentInputSchema.safeParse({ title: "새 제목" });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data).toEqual({ title: "새 제목" });
+  });
+
+  it("body 만 있으면 통과한다", () => {
+    const result = EditContentInputSchema.safeParse({ body: "새 본문" });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data).toEqual({ body: "새 본문" });
+  });
+
+  it("title·body 둘 다 있으면 통과한다", () => {
+    const result = EditContentInputSchema.safeParse({ title: "새 제목", body: "새 본문" });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data).toEqual({ title: "새 제목", body: "새 본문" });
+  });
+
+  it("title·body 둘 다 없으면(빈 객체) 거부한다 — 완전한 no-op PATCH 방지", () => {
+    expect(EditContentInputSchema.safeParse({}).success).toBe(false);
+  });
+
+  it("title 은 200자는 통과하지만 201자는 거부한다(경계값)", () => {
+    expect(EditContentInputSchema.safeParse({ title: "가".repeat(200) }).success).toBe(true);
+    expect(EditContentInputSchema.safeParse({ title: "가".repeat(201) }).success).toBe(false);
+  });
+
+  it("body 는 12,000자는 통과하지만 12,001자는 거부한다(경계값)", () => {
+    expect(EditContentInputSchema.safeParse({ body: "가".repeat(12_000) }).success).toBe(true);
+    expect(EditContentInputSchema.safeParse({ body: "가".repeat(12_001) }).success).toBe(false);
+  });
+
+  it("title 이 공백만이면 trim 후 빈 문자열이 되어 거부한다", () => {
+    expect(EditContentInputSchema.safeParse({ title: "   " }).success).toBe(false);
+  });
+
+  it("body 가 공백만이면 trim 후 빈 문자열이 되어 거부한다", () => {
+    expect(EditContentInputSchema.safeParse({ body: "   " }).success).toBe(false);
+  });
+
+  it("앞뒤 공백은 trim 되어 저장된다", () => {
+    const result = EditContentInputSchema.safeParse({ title: "  제목  ", body: "  본문  " });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data).toEqual({ title: "제목", body: "본문" });
   });
 });
