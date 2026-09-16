@@ -218,3 +218,12 @@ export const RejectInputSchema = z.object({
 });
 
 export type RejectInput = z.infer<typeof RejectInputSchema>;
+
+/**
+ * POST /api/contents/{id}/publish 요청 검증 — FR-013 계약(_workspace/contract_fr-013-publish.md).
+ */
+export const PublishInputSchema = z.object({
+  publishedUrl: z.string().trim().url().optional(),
+});
+
+export type PublishInput = z.infer<typeof PublishInputSchema>;

@@ -8,6 +8,7 @@ import { buildUtmLink } from "@/lib/utm";
 import { validate, type ValidationResult } from "@/lib/validator";
 import { resolveRules } from "@/services/rules";
 import { formatForChannel, type ChannelFormat } from "@/lib/channel-format";
+import { createUrlChecker, type UrlChecker } from "@/lib/url-check";
 
 /**
  * FR-009 콘텐츠 상태 전이(검수 요청/취소) — 계약(run 20260915-1754-5568).
@@ -20,7 +21,7 @@ export type Result<T> =
   | { ok: true; data: T }
   | { ok: false; error: { code: ErrorCode; message: string; details?: unknown } };
 
-export type TransitionAction = "submit" | "cancel_review" | "approve" | "reject";
+export type TransitionAction = "submit" | "cancel_review" | "approve" | "reject" | "publish";
 
 export const TRANSITIONS: Record<
   TransitionAction,
@@ -30,6 +31,7 @@ export const TRANSITIONS: Record<
   cancel_review: { from: ["in_review"], to: "draft", requireRole: "editor" },
   approve: { from: ["in_review"], to: "approved", requireRole: "admin" },
   reject: { from: ["in_review"], to: "rejected", requireRole: "admin" },
+  publish: { from: ["approved"], to: "published" },
 };
 
 /**
@@ -265,11 +267,11 @@ export async function listContents(
 }
 
 export async function transition(
-  deps: { db: Db; productBaseUrl: string },
+  deps: { db: Db; productBaseUrl: string; urlChecker?: UrlChecker },
   contentId: number,
   action: TransitionAction,
   actor: Actor,
-  extra?: { reason?: string },
+  extra?: { reason?: string; publishedUrl?: string },
 ): Promise<Result<ContentDetail>> {
   try {
     const selectQuery = deps.db.select().from(contents);
@@ -347,9 +349,20 @@ export async function transition(
       }
     }
 
+    let urlCheck: "ok" | "unreachable" | "skipped" | null = null;
+    if (action === "publish") {
+      const checker = deps.urlChecker ?? createUrlChecker();
+      urlCheck = await checker.check(extra?.publishedUrl ?? null);
+    }
+
     let reviewerId: number | null = null;
     if (action === "approve" || action === "reject") {
       reviewerId = await resolveActorUserId(deps.db, actor);
+    }
+
+    let publisherId: number | null = null;
+    if (action === "publish") {
+      publisherId = await resolveActorUserId(deps.db, actor);
     }
 
     // action 별로 .set() 인자 형태가 달라(submit 만 submittedAt·detectedTerms 를 추가,
@@ -366,6 +379,10 @@ export async function transition(
       reviewerId: contents.reviewerId,
       reviewedAt: contents.reviewedAt,
       rejectReason: contents.rejectReason,
+      publishedUrl: contents.publishedUrl,
+      urlCheck: contents.urlCheck,
+      publishedAt: contents.publishedAt,
+      publisherId: contents.publisherId,
     };
     const updateQuery =
       action === "submit"
@@ -392,17 +409,30 @@ export async function transition(
                 })
                 .where(and(eq(contents.id, contentId), eq(contents.status, row.status)))
                 .returning(returningColumns)
-            : deps.db
-                .update(contents)
-                .set({
-                  status: rule.to,
-                  updatedAt: sql`now()`,
-                  reviewerId,
-                  reviewedAt: sql`now()`,
-                  rejectReason: extra?.reason ?? null,
-                })
-                .where(and(eq(contents.id, contentId), eq(contents.status, row.status)))
-                .returning(returningColumns);
+            : action === "reject"
+              ? deps.db
+                  .update(contents)
+                  .set({
+                    status: rule.to,
+                    updatedAt: sql`now()`,
+                    reviewerId,
+                    reviewedAt: sql`now()`,
+                    rejectReason: extra?.reason ?? null,
+                  })
+                  .where(and(eq(contents.id, contentId), eq(contents.status, row.status)))
+                  .returning(returningColumns)
+              : deps.db
+                  .update(contents)
+                  .set({
+                    status: rule.to,
+                    updatedAt: sql`now()`,
+                    publishedUrl: extra?.publishedUrl ?? null,
+                    urlCheck,
+                    publishedAt: sql`now()`,
+                    publisherId,
+                  })
+                  .where(and(eq(contents.id, contentId), eq(contents.status, row.status)))
+                  .returning(returningColumns);
     const updatedRows = await updateQuery;
     const updated = updatedRows[0];
 
@@ -471,6 +501,10 @@ export async function transition(
       reviewedAt: action === "approve" || action === "reject" ? (updated?.reviewedAt ?? null) : row.reviewedAt,
       rejectReason:
         action === "reject" ? (extra?.reason ?? null) : action === "approve" ? null : row.rejectReason,
+      publishedUrl: action === "publish" ? (updated?.publishedUrl ?? null) : row.publishedUrl,
+      urlCheck: action === "publish" ? (updated?.urlCheck ?? null) : row.urlCheck,
+      publishedAt: action === "publish" ? (updated?.publishedAt ?? null) : row.publishedAt,
+      publisherId: action === "publish" ? (updated?.publisherId ?? null) : row.publisherId,
     };
 
     const data = toContentDetail(updatedRow, {
