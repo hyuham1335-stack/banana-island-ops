@@ -3,6 +3,7 @@ import type { Actor } from "@/lib/auth";
 import { POST_TYPE_LABELS, productLabel } from "@/components/plan-format";
 import { ContentTag } from "@/components/contents/ContentTag";
 import { ContentActions } from "@/components/contents/ContentActions";
+import { ChannelFormatCard } from "@/components/contents/ChannelFormatCard";
 import { Checks } from "@/components/write/Checks";
 import { Notice } from "@/components/ui/Notice";
 
@@ -60,6 +61,10 @@ export function ContentDetailPanel({
           <h3>본문</h3>
           <p style={{ whiteSpace: "pre-wrap" }}>{content.body ?? "(본문 없음)"}</p>
         </div>
+
+        {content.channelFormat ? (
+          <ChannelFormatCard channelFormat={content.channelFormat} link={content.link} />
+        ) : null}
 
         <Checks validation={content.validation} />
 

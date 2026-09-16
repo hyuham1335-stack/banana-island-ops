@@ -158,12 +158,18 @@ ContentDetail {
   authorId, reviewerId, publisherId,
   submittedAt, reviewedAt, publishedAt, updatedAt, createdAt,
   isExample: boolean, historyCount: number,
-  autoRegenerated: boolean           // 차단어로 1회 자동 재생성했는가
+  autoRegenerated: boolean,          // 차단어로 1회 자동 재생성했는가
+  channelFormat: ChannelFormat|null  // FR-012. status='approved'일 때만 계산, 그 외 null
 }
 ValidationResult {
   blocks: Finding[], warns: Finding[], missing: string[]
 }
 Finding { ruleId, label, matched: string, index: number, severity, alternative, reason }
+ChannelFormat {
+  body: string,        // 채널 형식이 반영된 본문(인스타/아마존은 원본, 블로그는 UTM 링크 없으면 끝에 추가)
+  hashtags: string[],  // 본문에서 추출한 해시태그. 인스타 외에는 항상 []
+  writeUrl: string|null
+}
 ```
 
 계획이 이미 다른 콘텐츠와 연결돼 있으면 409 `INVALID_TRANSITION`. LLM 실패 시 502/504 이되 **행은 `draft` 로 남고** 응답 `details.contentId` 로 알려준다.
@@ -179,6 +185,8 @@ Finding { ruleId, label, matched: string, index: number, severity, alternative, 
 → 200 `{ data: ContentDetail }` · 없으면 404.
 
 `link`는 저장되지 않고(스키마에 컬럼 없음) 매 조회마다 `buildUtmLink()`로 재계산한다(ADR-005와 같은 원칙 — 파생값은 저장하지 않는다).
+
+`channelFormat`도 저장되지 않고 `status='approved'`일 때만 매 조회마다 계산한다(FR-012, US-012). 그 외 상태는 `null`이다.
 
 ### PATCH `/api/contents/{id}`
 

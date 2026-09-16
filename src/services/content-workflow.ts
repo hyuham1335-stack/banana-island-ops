@@ -7,6 +7,7 @@ import type { ErrorCode } from "@/lib/http";
 import { buildUtmLink } from "@/lib/utm";
 import { validate, type ValidationResult } from "@/lib/validator";
 import { resolveRules } from "@/services/rules";
+import { formatForChannel, type ChannelFormat } from "@/lib/channel-format";
 
 /**
  * FR-009 콘텐츠 상태 전이(검수 요청/취소) — 계약(run 20260915-1754-5568).
@@ -86,6 +87,43 @@ export async function resolveContentLink(
 }
 
 /**
+ * FR-012 채널 형식 변환 — 계약(run 20260916-*) 「유닛 · resolveChannelFormat」.
+ * 호출자가 이미 계산한 link(resolveContentLink() 의 반환값)를 그대로 받는다 — 이 함수
+ * 내부에서 링크를 다시 계산하지 않는다. 채널 SELECT 결과가 없으면(FK 깨짐 등 방어적
+ * 상황) null 을 반환한다 — throw 하지 않는다(파일 상단 "서비스는 throw 하지 않는다" 불변식).
+ * 05-code-review sec Major 수리: deps.db.select() 자체가 던지는 예외(DB 오류 등)도 이
+ * 함수 안에서 흡수한다 — 호출부(getContentDetail 의 try/catch, approveContent 의 무보호
+ * 호출) 양쪽 모두가 이 불변식에 기대지 않고도 안전하도록 국소적으로 처리한다.
+ */
+export async function resolveChannelFormat(
+  deps: { db: Db },
+  row: Pick<ContentsRow, "id" | "channelId" | "body">,
+  link: string,
+): Promise<ChannelFormat | null> {
+  try {
+    const channelQuery = deps.db
+      .select({ linkPolicy: salesChannels.linkPolicy, writeUrl: salesChannels.writeUrl })
+      .from(salesChannels);
+    channelQuery.where(eq(salesChannels.id, row.channelId));
+    const channelRows = await channelQuery;
+    const channel = channelRows[0];
+    if (!channel) return null;
+
+    return formatForChannel({ body: row.body ?? "" }, channel, link);
+  } catch (err) {
+    console.error(
+      JSON.stringify({
+        event: "channel_format_resolve_failed",
+        contentId: row.id,
+        channelId: row.channelId,
+        message: err instanceof Error ? err.message : String(err),
+      }),
+    );
+    return null;
+  }
+}
+
+/**
  * GET /api/contents/{id} 상세 조회 — CONTRACT_DEFECT 수리(07 code-review): submit·
  * cancel-review 라우트가 이미 transition() 하나만 호출하는 얇은 형태인 것과 달리 이
  * 라우트만 SELECT·resolveContentLink·historyCount 조회·toContentDetail 조립을 라우트
@@ -115,6 +153,8 @@ export async function getContentDetail(
 
     const link = await resolveContentLink(deps, row);
 
+    const channelFormat = row.status === "approved" ? await resolveChannelFormat(deps, row, link) : null;
+
     const historyCountQuery = deps.db.select({ count: sql<number>`count(*)` }).from(contentHistory);
     historyCountQuery.where(eq(contentHistory.contentId, contentId));
     const historyCountRows = await historyCountQuery;
@@ -126,6 +166,7 @@ export async function getContentDetail(
       isExample: false,
       historyCount,
       autoRegenerated: row.regenCount > 0,
+      channelFormat,
     });
 
     return { ok: true, data };
@@ -438,6 +479,9 @@ export async function transition(
       isExample: false,
       historyCount,
       autoRegenerated: row.regenCount > 0,
+      // transition() 자체는 channelFormat 을 계산하지 않는다(계약 범위 밖) — approve
+      // 경로는 approveContent() 가 transition() 성공 후 별도로 계산해 덮어쓴다.
+      channelFormat: null,
     });
 
     return { ok: true, data };
@@ -474,15 +518,21 @@ export async function approveContent(
   const result = await transition(deps, contentId, "approve", actor);
   if (!result.ok) return result;
 
+  // FR-012: transition() 성공(approved 로 전이) 후 같은 방식(resolveChannelFormat)으로
+  // channelFormat 을 계산해 덮어쓴다 — transition() 의 link 는 이미 result.data.link 로
+  // 계산돼 있으므로 다시 계산하지 않는다.
+  const channelFormat = await resolveChannelFormat(deps, result.data, result.data.link);
+  const dataWithChannelFormat = { ...result.data, channelFormat };
+
   if (!registerAsExample) {
-    return { ok: true, data: { ...result.data, exampleRegistered: false, exampleSkippedReason: null } };
+    return { ok: true, data: { ...dataWithChannelFormat, exampleRegistered: false, exampleSkippedReason: null } };
   }
 
   if (result.data.validation.warns.length > 0) {
     return {
       ok: true,
       data: {
-        ...result.data,
+        ...dataWithChannelFormat,
         exampleRegistered: false,
         exampleSkippedReason: "경고 표현이 있어 예시로 등록하지 않았습니다.",
       },
@@ -497,7 +547,7 @@ export async function approveContent(
       summary: (result.data.body ?? "").slice(0, 800),
       reason: "admin_approval",
     });
-    return { ok: true, data: { ...result.data, exampleRegistered: true, exampleSkippedReason: null } };
+    return { ok: true, data: { ...dataWithChannelFormat, exampleRegistered: true, exampleSkippedReason: null } };
   } catch (err) {
     console.error(
       JSON.stringify({
@@ -509,7 +559,7 @@ export async function approveContent(
     return {
       ok: true,
       data: {
-        ...result.data,
+        ...dataWithChannelFormat,
         exampleRegistered: false,
         exampleSkippedReason: "예시 등록 중 오류가 발생했습니다.",
       },

@@ -563,6 +563,10 @@ export async function createContentWithBody(
       isExample: false,
       historyCount: 0,
       autoRegenerated: resultAutoRegenerated,
+      // FR-012: 이 경로는 방금 생성된 draft 콘텐츠 전용이라 status 가 항상 draft 다 —
+      // channelFormat 은 approved 상태에서만 계산된다(content-workflow.ts::getContentDetail
+      // 과 같은 규칙).
+      channelFormat: null,
     });
 
     return { ok: true, data };
