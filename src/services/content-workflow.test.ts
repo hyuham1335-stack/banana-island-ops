@@ -1083,3 +1083,188 @@ describe("approveContent", () => {
     }
   });
 });
+
+// -----------------------------------------------------------------------------
+// transition(action: "publish") — FR-013 계약(_workspace/contract_fr-013-publish.md)
+// 「유닛 · transition」. 기존 describe("transition") 블록·DEPS 상수는 건드리지 않고, publish
+// 전용 호출에서만 `{ ...DEPS, urlChecker: mockChecker }` 로 개별 주입한다(다른 액션 테스트는
+// 여전히 urlChecker 없는 DEPS 를 그대로 쓴다). urlChecker 는 실제 네트워크를 타지 않는 순수
+// mock(`{ check: vi.fn() }`)이다 — createUrlChecker() 자체의 fetch 동작은 url-check.test.ts 가
+// 이미 덮는다.
+// -----------------------------------------------------------------------------
+
+function urlCheckerMock(result: "ok" | "unreachable" | "skipped") {
+  return { check: vi.fn().mockResolvedValue(result) };
+}
+
+describe("transition — publish", () => {
+  it("approved→published 허용 — publishedUrl·urlCheck·publishedAt·publisherId 가 저장된다", async () => {
+    const row = contentRow({ status: "approved" });
+    const publishedAt = new Date("2026-09-16T00:00:00Z");
+    const checker = urlCheckerMock("ok");
+    const { db, update, updateSetCalls } = createDbMock({
+      contentRows: [row],
+      userRows: [{ id: 5 }],
+      updateReturningResult: [
+        {
+          updatedAt: publishedAt,
+          publishedUrl: "https://blog.naver.com/post/1",
+          urlCheck: "ok",
+          publishedAt,
+          publisherId: 5,
+        },
+      ],
+    });
+
+    const result = await transition(
+      { db, ...DEPS, urlChecker: checker },
+      1,
+      "publish",
+      { role: "editor" },
+      { publishedUrl: "https://blog.naver.com/post/1" },
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.status).toBe("published");
+      expect(result.data.publishedUrl).toBe("https://blog.naver.com/post/1");
+      expect(result.data.urlCheck).toBe("ok");
+      expect(result.data.publisherId).toBe(5);
+      expect(result.data.publishedAt).toBe(publishedAt.toISOString());
+    }
+    expect(checker.check).toHaveBeenCalledWith("https://blog.naver.com/post/1");
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(updateSetCalls[0]).toMatchObject({ status: "published", urlCheck: "ok" });
+  });
+
+  it.each(["draft", "in_review", "rejected", "published"] as const)(
+    "INVALID_TRANSITION — publish 를 status='%s' 인 행에 호출하면 409 다(urlChecker 는 호출되지 않는다)",
+    async (status) => {
+      const row = contentRow({ status });
+      const checker = urlCheckerMock("ok");
+      const { db, update } = createDbMock({ contentRows: [row] });
+
+      const result = await transition(
+        { db, ...DEPS, urlChecker: checker },
+        1,
+        "publish",
+        { role: "editor" },
+        { publishedUrl: "https://blog.naver.com/post/1" },
+      );
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.code).toBe("INVALID_TRANSITION");
+        expect(result.error.details).toEqual({ from: status, action: "publish" });
+      }
+      expect(update).not.toHaveBeenCalled();
+      expect(checker.check).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ["ok", "https://blog.naver.com/post/2"],
+    ["unreachable", "https://blog.naver.com/post/3"],
+    ["skipped", "https://blog.naver.com/post/4"],
+  ] as const)(
+    "urlChecker.check 가 '%s' 를 반환하면 urlCheck 컬럼에 그대로 저장된다",
+    async (checkResult, publishedUrl) => {
+      const row = contentRow({ status: "approved" });
+      const checker = urlCheckerMock(checkResult);
+      const { db, updateSetCalls } = createDbMock({
+        contentRows: [row],
+        userRows: [{ id: 1 }],
+        updateReturningResult: [
+          { updatedAt: new Date(), publishedUrl, urlCheck: checkResult, publishedAt: new Date(), publisherId: 1 },
+        ],
+      });
+
+      const result = await transition(
+        { db, ...DEPS, urlChecker: checker },
+        1,
+        "publish",
+        { role: "editor" },
+        { publishedUrl },
+      );
+
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.data.urlCheck).toBe(checkResult);
+      expect(updateSetCalls[0]).toMatchObject({ urlCheck: checkResult });
+    },
+  );
+
+  it("publishedUrl 없이 호출해도 발행에 성공한다 — urlChecker.check 가 null 로 호출되고 urlCheck='skipped' 가 저장된다", async () => {
+    const row = contentRow({ status: "approved" });
+    const checker = urlCheckerMock("skipped");
+    const { db, updateSetCalls } = createDbMock({
+      contentRows: [row],
+      userRows: [{ id: 1 }],
+      updateReturningResult: [
+        { updatedAt: new Date(), publishedUrl: null, urlCheck: "skipped", publishedAt: new Date(), publisherId: 1 },
+      ],
+    });
+
+    const result = await transition({ db, ...DEPS, urlChecker: checker }, 1, "publish", { role: "editor" });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.publishedUrl).toBeNull();
+      expect(result.data.urlCheck).toBe("skipped");
+    }
+    expect(checker.check).toHaveBeenCalledWith(null);
+    expect(updateSetCalls[0]).toMatchObject({ publishedUrl: null, urlCheck: "skipped" });
+  });
+
+  it("publish: 시드 유저가 없을 때(resolveActorUserId 가 null 반환) → publisherId:null 로 성공한다(에러 아님)", async () => {
+    const row = contentRow({ status: "approved" });
+    const checker = urlCheckerMock("ok");
+    const { db } = createDbMock({
+      contentRows: [row],
+      userRows: [],
+      updateReturningResult: [
+        {
+          updatedAt: new Date(),
+          publishedUrl: "https://blog.naver.com/post/5",
+          urlCheck: "ok",
+          publishedAt: new Date(),
+          publisherId: null,
+        },
+      ],
+    });
+
+    const result = await transition(
+      { db, ...DEPS, urlChecker: checker },
+      1,
+      "publish",
+      { role: "editor" },
+      { publishedUrl: "https://blog.naver.com/post/5" },
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.publisherId).toBeNull();
+  });
+
+  it("urlChecker 를 넘기지 않으면 기본값 createUrlChecker() 를 쓴다 — publishedUrl 없이 호출하면 실제 네트워크를 타지 않고 urlCheck='skipped' 로 성공한다", async () => {
+    const row = contentRow({ status: "approved" });
+    const { db } = createDbMock({
+      contentRows: [row],
+      userRows: [{ id: 1 }],
+      updateReturningResult: [
+        { updatedAt: new Date(), publishedUrl: null, urlCheck: "skipped", publishedAt: new Date(), publisherId: 1 },
+      ],
+    });
+
+    // urlChecker 를 deps 에 아예 넣지 않는다 — transition() 내부에서 createUrlChecker() 로
+    // 기본값을 만든다(계약 「유닛」). publishedUrl 을 넘기지 않으므로 checker.check(null) 이
+    // 호출되고, createUrlChecker() 의 실제 구현은 url 이 null 이면 fetch 를 시도하지 않고
+    // 즉시 "skipped" 를 반환한다(url-check.test.ts 로 이미 검증) — 이 테스트는 실제 네트워크
+    // 요청 없이 그 배선만 확인한다.
+    const result = await transition({ db, ...DEPS }, 1, "publish", { role: "editor" });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.publishedUrl).toBeNull();
+      expect(result.data.urlCheck).toBe("skipped");
+    }
+  });
+});

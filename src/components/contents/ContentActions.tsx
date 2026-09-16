@@ -31,6 +31,10 @@ export function ContentActions({
   const [registerAsExample, setRegisterAsExample] = useState(false);
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState("");
+  const [publishUrl, setPublishUrl] = useState("");
+  const [publishResult, setPublishResult] = useState<{ urlCheck: "ok" | "unreachable" | "skipped" | null } | null>(
+    null,
+  );
 
   async function run(action: "submit" | "cancel-review") {
     setState({ pending: true, error: null });
@@ -91,7 +95,35 @@ export function ContentActions({
     }
   }
 
-  if (status !== "draft" && status !== "rejected" && status !== "in_review" && !approveResult) {
+  async function runPublish() {
+    setState({ pending: true, error: null });
+    try {
+      const res = await fetch(`/api/contents/${contentId}/publish`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(publishUrl.trim() ? { publishedUrl: publishUrl.trim() } : {}),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setState({ pending: false, error: json.error?.message ?? "요청을 처리하지 못했습니다." });
+        return;
+      }
+      setState({ pending: false, error: null });
+      setPublishResult({ urlCheck: json.data.urlCheck });
+      router.refresh();
+    } catch {
+      setState({ pending: false, error: "요청을 보내지 못했습니다." });
+    }
+  }
+
+  if (
+    status !== "draft" &&
+    status !== "rejected" &&
+    status !== "in_review" &&
+    status !== "approved" &&
+    !approveResult &&
+    !publishResult
+  ) {
     return null;
   }
 
@@ -143,6 +175,30 @@ export function ContentActions({
           {approveResult.exampleRegistered ? <Notice variant="ok">브랜드 예시로 등록되었습니다.</Notice> : null}
           {approveResult.exampleSkippedReason ? (
             <Notice variant="warn">{approveResult.exampleSkippedReason}</Notice>
+          ) : null}
+        </>
+      ) : null}
+
+      {status === "approved" ? (
+        <div id="publishBox">
+          <input
+            type="text"
+            placeholder="발행된 URL(선택)"
+            value={publishUrl}
+            onChange={(e) => setPublishUrl(e.target.value)}
+            disabled={state.pending}
+          />
+          <Button small disabled={state.pending} onClick={() => void runPublish()}>
+            발행 완료
+          </Button>
+        </div>
+      ) : null}
+
+      {publishResult ? (
+        <>
+          {publishResult.urlCheck === "ok" ? <Notice variant="ok">URL 접속을 확인했습니다.</Notice> : null}
+          {publishResult.urlCheck === "unreachable" ? (
+            <Notice variant="warn">URL 에 접속할 수 없습니다. 링크를 다시 확인하세요.</Notice>
           ) : null}
         </>
       ) : null}
