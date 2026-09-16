@@ -11,3 +11,7 @@
 
 | 날짜 | run_id | rule_id | category | enforceable | 근거 | 판정 | 조치 | 베이스라인 diff | 철회 사유 |
 |---|---|---|---|---|---|---|---|---|---|
+| 2026-09-16 | 20260916-0038-3305 | naming-convention | NAMING | lint | 3회 / 3런 | new | skipped | 미측정 | - |
+| 2026-09-16 | 20260916-0038-3305 | component-units-untested-by-design | TEST_MISSING_FAILURE_PATH | prose | 10회 / 2런 | new | skipped | 해당 없음 | - |
+| 2026-09-16 | 20260916-0206-6da3 | maxduration-route-config-not-out-of-contract | NAMING | lint | 4회 / 4런 | new | skipped | 미측정 | - |
+| 2026-09-16 | 20260916-0206-6da3 | transition-action-coverage-stale | TEST_MISSING_FAILURE_PATH | prose | 10회 / 2런 | new | skipped | 해당 없음 | - |
