@@ -47,12 +47,21 @@ vi.mock("@/services/rules", async (importOriginal) => {
   return { ...actual, resolveRules: vi.fn(actual.resolveRules) };
 });
 
+import { and, eq, isNull } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import type { ContentsRow } from "@/lib/content-detail";
 import type { BrandRuleRow } from "@/lib/rules-merge";
 import { resolveRules } from "@/services/rules";
-import { approveContent, getContentDetail, listContents, resolveContentLink, transition } from "./content-workflow";
+import {
+  approveContent,
+  bodyUnchangedGuard,
+  getContentDetail,
+  listContents,
+  resolveContentLink,
+  statusAfterEdit,
+  transition,
+} from "./content-workflow";
 
 // 계약: FR-010·FR-011(런 20260915-2042-728c) 「유닛 · src/services/content-workflow.ts ·
 // TRANSITIONS(approve/reject)·resolveActorUserId·transition(approve/reject 경로)·
@@ -428,6 +437,34 @@ describe("listContents", () => {
   });
 });
 
+// -----------------------------------------------------------------------------
+// bodyUnchangedGuard · statusAfterEdit — FR-008 계약(_workspace/contract_fr-008-direct-edit.md)
+// 「유닛」. 둘 다 순수 함수라 DB 모킹 없이 직접 호출·검증한다.
+// -----------------------------------------------------------------------------
+
+describe("bodyUnchangedGuard", () => {
+  it("body: null 이면 isNull(contents.body) 조건을 반환한다(eq(contents.body, null) 은 SQL 상 항상 거짓이라 쓰지 않는다)", () => {
+    expect(bodyUnchangedGuard(null)).toEqual(isNull(schema.contents.body));
+  });
+
+  it("body: 'x' 이면 eq(contents.body, 'x') 조건을 반환한다", () => {
+    expect(bodyUnchangedGuard("x")).toEqual(eq(schema.contents.body, "x"));
+  });
+});
+
+describe("statusAfterEdit", () => {
+  it("status='rejected' 면 'draft' 를 반환한다(FR-011 — 수정하러 가기)", () => {
+    expect(statusAfterEdit("rejected")).toBe("draft");
+  });
+
+  it.each(["draft", "in_review", "approved", "published"] as const)(
+    "status='%s' 면 입력 그대로 반환한다(편집으로 상태가 바뀌지 않는다)",
+    (status) => {
+      expect(statusAfterEdit(status)).toBe(status);
+    },
+  );
+});
+
 describe("transition", () => {
   it("NOT_FOUND — 존재하지 않는 contentId 면 NOT_FOUND 를 돌려주고 아무 것도 쓰지 않는다", async () => {
     const { db, update, insert } = createDbMock({ contentRows: [] });
@@ -506,6 +543,55 @@ describe("transition", () => {
     expect(insert).not.toHaveBeenCalled();
   });
 
+  // FR-008 계약(01 라운드2 critical 수리) 회귀 방지 — submit 성공 UPDATE 의 .where() 에
+  // bodyUnchangedGuard(row.body) 가 추가됐는데, body 가 null 인 행에서 eq(contents.body,
+  // null) 을 그대로 썼다면 SQL 상 x = NULL 은 항상 UNKNOWN 이 되어 동시성 경합이 전혀
+  // 없어도 이 UPDATE 가 매번 0행으로 떨어져 항상 409 를 오반환했을 것이다. 실제 where
+  // 인자가 isNull(contents.body) 로 분기됐는지까지 구조적으로 확인한다.
+  it("body 가 null 인 draft 에 동시성 경합 없이 submit 을 호출하면 정상 처리된다(bodyUnchangedGuard 가 isNull 로 분기하지 않으면 항상 409가 났던 버그의 재발 방지)", async () => {
+    const row = contentRow({ status: "draft", body: null });
+    const { db, update, insert, updateWhereCalls } = createDbMock({
+      contentRows: [row],
+      ruleRows: [],
+      historyCountRows: [{ count: 0 }],
+    });
+
+    const result = await transition({ db, ...DEPS }, 1, "submit", { role: "editor" });
+
+    expect(result.ok).toBe(true);
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(insert).toHaveBeenCalledTimes(1);
+    expect(updateWhereCalls[0]).toEqual(
+      and(eq(schema.contents.id, 1), eq(schema.contents.status, "draft"), eq(schema.contents.regenCount, 0), isNull(schema.contents.body)),
+    );
+  });
+
+  // FR-008 계약 §1 — submit 의 성공 UPDATE 가드에 bodyUnchangedGuard(row.body) 를 추가한
+  // 이유: 동시에 editContent(또는 regenerate)가 body 를 바꾸면 이 UPDATE 는 0행이 되어야
+  // 하고(stale detectedTerms 가 in_review 로 커밋되는 것을 막는다), 기존 regenCount 가드만
+  // 으로는 editContent 의 body 변경을 못 잡는다(editContent 는 regenCount 를 안 건드린다).
+  // 기존 status/regenCount 축 경합 테스트와 같은 패턴을 body 축에 추가한다.
+  it("submit 성공 진행 중 body 가 바뀌면(가짜 db.update 0행 목킹) 409 를 돌려주고 content_history 는 쓰지 않는다 — body 축 경합(status/regenCount 축과 별개)", async () => {
+    const staleRow = contentRow({ status: "draft", body: "깨끗한 본문입니다." });
+    const freshRow = contentRow({ status: "draft", body: "동시에 editContent 가 바꾼 새 본문" });
+    const { db, update, insert } = createDbMock({
+      contentRows: [staleRow],
+      contentRowsSequence: [[staleRow], [freshRow]],
+      ruleRows: [],
+      updateReturningResult: [], // body 가드에 걸려 0행
+    });
+
+    const result = await transition({ db, ...DEPS }, 1, "submit", { role: "editor" });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe("INVALID_TRANSITION");
+      expect(result.error.details).toEqual({ from: "draft", action: "submit" });
+    }
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(insert).not.toHaveBeenCalled();
+  });
+
   it("BLOCKED_TERMS_REMAIN — submit 시 차단 등급 표현이 남아 있으면 422 를 돌려주고, 상태는 바꾸지 않되 detectedTerms 는 갱신하는 UPDATE(status 가드 포함)를 호출한다", async () => {
     const row = contentRow({ status: "draft", body: "당뇨 완치 프로젝트 본문" });
     const { db, update, insert, updateSetCalls, updateWhereCalls } = createDbMock({
@@ -531,6 +617,31 @@ describe("transition", () => {
     // (0-arg 가 아닌) 호출이었는지를 본다.
     expect(updateWhereCalls[0]).toBeTruthy();
     // 차단으로 끝났으니 이력 insert 는 일어나지 않는다.
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  // 02 교차검증 major 수리 — 차단-거부(422) 분기의 detectedTerms 갱신 UPDATE 도 body 가드가
+  // 걸린다. 동시에 editContent 가 본문을 차단어 없는 내용으로 고쳐 먼저 커밋하면, 이
+  // UPDATE 가 SELECT 시점의(차단된) validation 을 이미 깨끗해진 본문 위에 덮어써 GET
+  // 상세가 계속 "차단됨"으로 보이는 정합성 결함이 생긴다 — 0행이면 BLOCKED_TERMS_REMAIN
+  // 대신 INVALID_TRANSITION(409, details 에 action 포함)을 반환하고 detectedTerms 도
+  // 갱신되지 않는다(이미 0행이라 UPDATE 자체가 반영되지 않았다).
+  it("submit 이 차단어 잔존(422)으로 끝나는 도중 body 가 바뀌면(가짜 db.update 0행 목킹) INVALID_TRANSITION(409)으로 바뀌고 detectedTerms 갱신도 안 된다", async () => {
+    const row = contentRow({ status: "draft", body: "당뇨 완치 프로젝트 본문" });
+    const { db, update, insert } = createDbMock({
+      contentRows: [row],
+      ruleRows: [CURE_BAN_RULE],
+      updateReturningResult: [], // detectedTerms 갱신 UPDATE 가 body 가드에 걸려 0행
+    });
+
+    const result = await transition({ db, ...DEPS }, 1, "submit", { role: "editor" });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe("INVALID_TRANSITION");
+      expect(result.error.details).toEqual({ from: "draft", action: "submit" });
+    }
+    expect(update).toHaveBeenCalledTimes(1);
     expect(insert).not.toHaveBeenCalled();
   });
 

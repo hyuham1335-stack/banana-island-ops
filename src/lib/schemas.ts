@@ -243,3 +243,19 @@ export const RegenerateInputSchema = z.object({
 });
 
 export type RegenerateInput = z.infer<typeof RegenerateInputSchema>;
+
+/**
+ * PATCH /api/contents/{id} 요청 검증 — FR-008 계약(_workspace/contract_fr-008-direct-edit.md).
+ * title 상한 200 은 CreateContentInputSchema.title 과 동일 근거. body 상한 12,000 은
+ * LlmBodyDraftSchema.body 와 동일(TRD 본문 길이 가드레일).
+ */
+export const EditContentInputSchema = z
+  .object({
+    title: z.string().trim().min(1).max(200).optional(),
+    body: z.string().trim().min(1).max(12_000).optional(),
+  })
+  .refine((data) => data.title !== undefined || data.body !== undefined, {
+    message: "title 또는 body 중 최소 하나는 있어야 합니다.",
+  });
+
+export type EditContentInput = z.infer<typeof EditContentInputSchema>;

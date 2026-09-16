@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import type { Actor } from "@/lib/auth";
 import type { Db } from "@/lib/db/client";
 import { brandExamples, contentHistory, contents, products, publishPlans, salesChannels, users } from "@/lib/db/schema";
@@ -33,6 +33,27 @@ export const TRANSITIONS: Record<
   reject: { from: ["in_review"], to: "rejected", requireRole: "admin" },
   publish: { from: ["approved"], to: "published" },
 };
+
+/**
+ * FR-008 계약(_workspace/contract_fr-008-direct-edit.md) 「유닛 · bodyUnchangedGuard」.
+ * `contents.body` 는 nullable 컬럼이라 `eq(contents.body, null)` 은 SQL `x = NULL`(항상
+ * UNKNOWN)이 되어 body 가 아직 없는 행(createContentWithBody 의 isNull(contents.body)
+ * 가드가 근거로 삼는 상태)에 대한 정상 요청까지 0행으로 오반환한다. body === null 일 때
+ * isNull() 로 분기해야 이 문제가 없다.
+ */
+export function bodyUnchangedGuard(body: string | null) {
+  return body === null ? isNull(contents.body) : eq(contents.body, body);
+}
+
+/**
+ * FR-008 계약 「유닛 · statusAfterEdit」. rejected → draft, 그 외 4개 상태는 입력 그대로
+ * 반환한다. TRANSITIONS 테이블에 넣지 않는다 — "상태 전이"가 아니라 "상태를 참조해
+ * 파생시키는 규칙"이라 from/to 쌍 하나로 표현되지 않는다(regenerateContentBody 의
+ * row.status !== "draft" && row.status !== "rejected" 독립 가드와 같은 이유).
+ */
+export function statusAfterEdit(status: ContentDetail["status"]): ContentDetail["status"] {
+  return status === "rejected" ? "draft" : status;
+}
 
 /**
  * 승인·반려 행위자의 users.id 근사 — listContents 의 mine 필터(155~165행)와 같은 패턴.
@@ -329,14 +350,28 @@ export async function transition(
       validation = validate(row.body ?? "", { must: rulesResult.data.must, ban: rulesResult.data.ban });
 
       if (validation.blocks.length > 0) {
-        // AND status=row.status — 이 UPDATE 는 상태를 바꾸지 않으므로 0행이어도 별도 처리
-        // 없이 그대로 BLOCKED_TERMS_REMAIN 을 반환한다(원래 읽은 정보로 알리는 것 자체는
-        // 여전히 유효하다).
+        // AND status=row.status·bodyUnchangedGuard(row.body) — 이 UPDATE 는 상태를 바꾸지
+        // 않지만, 동시에 editContent 가 본문을 차단어 없는 내용으로 고쳐 먼저 커밋하면
+        // 이 UPDATE 가 SELECT 시점의(차단된) validation 을 이미 깨끗해진 본문 위에 덮어써
+        // GET 상세가 계속 "차단됨"으로 보이는 정합성 결함이 생긴다 — 0행이면 그 경합이
+        // 있었다는 뜻이므로 BLOCKED_TERMS_REMAIN 대신 INVALID_TRANSITION 을 반환한다.
         const blockedUpdateQuery = deps.db
           .update(contents)
           .set({ detectedTerms: validation, updatedAt: sql`now()` })
-          .where(and(eq(contents.id, contentId), eq(contents.status, row.status)));
-        await blockedUpdateQuery;
+          .where(and(eq(contents.id, contentId), eq(contents.status, row.status), bodyUnchangedGuard(row.body)))
+          .returning({ id: contents.id });
+        const blockedUpdateRows = await blockedUpdateQuery;
+
+        if (blockedUpdateRows.length === 0) {
+          return {
+            ok: false,
+            error: {
+              code: "INVALID_TRANSITION",
+              message: "현재 상태에서 허용되지 않는 전이입니다.",
+              details: { from: row.status, action: "submit" },
+            },
+          };
+        }
 
         return {
           ok: false,
@@ -395,7 +430,14 @@ export async function transition(
             // 요청이 regenerateContentBody 로 body 를 바꾼 뒤에도 그대로 커밋돼(status
             // 는 여전히 draft 라 가드를 통과) 실제 본문과 다른 detectedTerms 가
             // in_review 상태에 저장될 수 있었다(차단어가 남은 본문이 검수로 새는 경로).
-            .where(and(eq(contents.id, contentId), eq(contents.status, row.status), eq(contents.regenCount, row.regenCount)))
+            .where(
+              and(
+                eq(contents.id, contentId),
+                eq(contents.status, row.status),
+                eq(contents.regenCount, row.regenCount),
+                bodyUnchangedGuard(row.body),
+              ),
+            )
             .returning(returningColumns)
         : action === "cancel_review"
           ? deps.db

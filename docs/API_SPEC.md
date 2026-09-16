@@ -191,6 +191,7 @@ ChannelFormat {
 ### PATCH `/api/contents/{id}`
 
 요청 `EditContentInput { title?: string, body?: string }` → 200 `{ data: ContentDetail }` (재검증 포함). `published` 는 409.
+`rejected` 상태의 콘텐츠를 편집하면 `draft` 로 전이한다(FR-011 — "수정하러 가기"). 그 외 상태(`draft`·`in_review`·`approved`)는 상태가 바뀌지 않는다.
 
 ### POST `/api/contents/{id}/regenerate`
 

@@ -19,6 +19,7 @@ vi.mock("@/services/rules", async (importOriginal) => {
   return { ...actual, resolveRules: vi.fn(actual.resolveRules) };
 });
 
+import { and, eq, isNull } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { LlmFailedError, LlmTimeoutError } from "@/lib/llm/client";
@@ -36,6 +37,7 @@ import {
   BODY_TOTAL_BUDGET_MS,
   MIN_BODY_REGEN_BUDGET_MS,
   createContentWithBody,
+  editContent,
   generateTitles,
   regenerateContentBody,
 } from "./content-generation";
@@ -1315,6 +1317,7 @@ function createRegenerateDbMock(opts: {
 }) {
   const insertValuesCalls: unknown[] = [];
   const updateSetCalls: unknown[] = [];
+  const updateWhereCalls: unknown[] = [];
 
   const select = vi.fn(() => ({
     from: vi.fn((table: unknown) => {
@@ -1335,12 +1338,15 @@ function createRegenerateDbMock(opts: {
       set: vi.fn((vals: unknown) => {
         updateSetCalls.push(vals);
         return {
-          where: vi.fn(() => ({
-            returning: vi.fn(() => {
-              if (opts.updateResult instanceof Error) return makeThrowingNode(opts.updateResult);
-              return makeChainNode(opts.updateResult ?? []);
-            }),
-          })),
+          where: vi.fn((whereArg: unknown) => {
+            updateWhereCalls.push(whereArg);
+            return {
+              returning: vi.fn(() => {
+                if (opts.updateResult instanceof Error) return makeThrowingNode(opts.updateResult);
+                return makeChainNode(opts.updateResult ?? []);
+              }),
+            };
+          }),
         };
       }),
     };
@@ -1363,6 +1369,7 @@ function createRegenerateDbMock(opts: {
     update,
     insertValuesCalls,
     updateSetCalls,
+    updateWhereCalls,
   };
 }
 
@@ -1488,6 +1495,36 @@ describe("regenerateContentBody", () => {
     expect(result.ok).toBe(true);
   });
 
+  // FR-008 계약(01 라운드2 critical 수리) 회귀 방지 — 낙관적 잠금 UPDATE 의 .where() 에
+  // bodyUnchangedGuard(row.body) 를 추가했는데, body 가 null 인 행(FR-005 생성 실패로
+  // 재시도 대기 중)에서 eq(contents.body, null) 을 그대로 썼다면 SQL 상 x = NULL 은 항상
+  // UNKNOWN 이 되어 경합이 전혀 없어도 이 UPDATE 가 매번 0행으로 떨어져 항상 409 를
+  // 오반환했을 것이다. 실제 where 인자가 isNull(contents.body) 로 분기됐는지까지 확인한다.
+  it("body 가 null 인 draft 행에 동시성 경합 없이 regenerateContentBody 를 호출하면 정상 처리된다(bodyUnchangedGuard 가 isNull 로 분기하지 않으면 항상 409가 났던 버그의 재발 방지)", async () => {
+    const { db, update, insert, updateWhereCalls } = createRegenerateDbMock({
+      contentRows: [{ ...REGEN_BASE_ROW, body: null }],
+      channelRows: [{ id: 10, country: "KR" }],
+      ruleRows: [],
+      updateResult: [{ updatedAt: new Date(), regenCount: 1 }],
+    });
+    const generateJson = vi.fn().mockResolvedValue({ body: "새로 생성된 본문" });
+    const llm = { generateJson };
+
+    const result = await regenerateContentBody({ ...REGEN_DEPS_BASE, db, llm }, 601, {});
+
+    expect(result.ok).toBe(true);
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(insert).toHaveBeenCalledTimes(1);
+    expect(updateWhereCalls[0]).toEqual(
+      and(
+        eq(schema.contents.id, 601),
+        eq(schema.contents.status, "draft"),
+        eq(schema.contents.regenCount, 0),
+        isNull(schema.contents.body),
+      ),
+    );
+  });
+
   it("instruction 없이 호출해도 성공하고(선택값), 프롬프트에 '지시 없음' 안내 문구가 쓰인다", async () => {
     const { db } = createRegenerateDbMock({
       contentRows: [REGEN_BASE_ROW],
@@ -1611,5 +1648,380 @@ describe("regenerateContentBody", () => {
     if (!result.ok) expect(result.error.code).toBe("LLM_FAILED");
     expect(update).not.toHaveBeenCalled();
     expect(insert).not.toHaveBeenCalled();
+  });
+});
+
+// =============================================================================
+// 계약: FR-008(_workspace/contract_fr-008-direct-edit.md) 「유닛 ·
+// src/services/content-generation.ts::editContent(deps: { db, productBaseUrl }, contentId, input)」
+//
+// 외부 경계(계약): 없음(LLM·시트·환율 등 외부 호출이 없는 유닛) — 이 스위트가 모킹하는
+// 대상은 Db(drizzle) 뿐이다. resolveRules·validate·resolveContentLink·resolveChannelFormat·
+// statusAfterEdit·bodyUnchangedGuard 는 내부 위임이라(외부 경계가 아니다) 실물 그대로
+// 통과시킨다 — content-workflow.test.ts·위 regenerateContentBody 스위트와 같은 원칙.
+//
+// DB 쿼리 형태(계약이 고정하지 않은 부분, 이 파일이 고른 가정):
+//   - select().from(contents) 로 대상 행을 1회 조회한다(id 로 필터) — 없으면 NOT_FOUND.
+//   - resolveRules(실물)가 salesChannels·brandRules 를 조회하고, resolveContentLink·
+//     resolveChannelFormat(둘 다 실물)이 salesChannels(그리고 productId 가 있으면 products)를
+//     추가로 조회한다 — 모두 같은 고정 채널 행을 재사용해도 안전하다(테스트 케이스가 보는
+//     값은 linkPolicy·writeUrl·utmSource·utmMedium 뿐이다).
+//   - 성공 시 update(contents) 1회(낙관적 잠금 — status·title·bodyUnchangedGuard 삼중 가드)와
+//     그것이 성공했을 때만 insert(content_history) 1회가 일어난다. UPDATE 가 0행이면 INSERT
+//     는 일어나지 않는다.
+// =============================================================================
+
+function createEditDbMock(opts: {
+  contentRows?: Record<string, unknown>[]; // 대상 콘텐츠 SELECT 결과 — 빈 배열 = NOT_FOUND
+  channelRows?: (ChannelDetailRow & { writeUrl?: string | null })[];
+  ruleRows?: BrandRuleRow[];
+  productRows?: Pick<ProductDetailRow, "productCode">[];
+  updateResult?: Record<string, unknown>[] | Error; // 낙관적 잠금 UPDATE 결과 — 빈 배열 = 경합 실패
+  historyResult?: Record<string, unknown>[]; // insert(content_history).returning() 결과
+}) {
+  const insertValuesCalls: unknown[] = [];
+  const updateSetCalls: unknown[] = [];
+  const updateWhereCalls: unknown[] = [];
+
+  const select = vi.fn(() => ({
+    from: vi.fn((table: unknown) => {
+      if (table === schema.contents) return makeChainNode(opts.contentRows ?? []);
+      if (table === schema.salesChannels) return makeChainNode(opts.channelRows ?? [EDIT_CHANNEL_ROW]);
+      if (table === schema.brandRules) return makeChainNode(opts.ruleRows ?? []);
+      if (table === schema.products) return makeChainNode(opts.productRows ?? []);
+      throw new Error(`unexpected select().from() table in test mock: ${String(table)}`);
+    }),
+  }));
+
+  const update = vi.fn((table: unknown) => {
+    if (table !== schema.contents) throw new Error("unexpected update() table in test mock");
+    return {
+      set: vi.fn((vals: unknown) => {
+        updateSetCalls.push(vals);
+        return {
+          where: vi.fn((whereArg: unknown) => {
+            updateWhereCalls.push(whereArg);
+            return {
+              returning: vi.fn(() => {
+                if (opts.updateResult instanceof Error) return makeThrowingNode(opts.updateResult);
+                return makeChainNode(opts.updateResult ?? []);
+              }),
+            };
+          }),
+        };
+      }),
+    };
+  });
+
+  const insert = vi.fn((table: unknown) => {
+    if (table !== schema.contentHistory) throw new Error("unexpected insert() table in test mock");
+    return {
+      values: vi.fn((vals: unknown) => {
+        insertValuesCalls.push(vals);
+        return {
+          returning: vi.fn(() => makeChainNode(opts.historyResult ?? [{ versionNo: 1 }])),
+        };
+      }),
+    };
+  });
+
+  return {
+    db: { select, insert, update } as unknown as Db,
+    select,
+    insert,
+    update,
+    insertValuesCalls,
+    updateSetCalls,
+    updateWhereCalls,
+  };
+}
+
+const EDIT_CHANNEL_ROW: ChannelDetailRow & { writeUrl?: string | null } = {
+  id: 10,
+  name: "카카오스토어",
+  country: "KR",
+  utmSource: "kakao",
+  utmMedium: "sns",
+  linkPolicy: "inline",
+  writeUrl: null,
+};
+
+const EDIT_BASE_ROW: Record<string, unknown> = {
+  id: 701,
+  publishPlanId: null,
+  sourceContentId: null,
+  productId: null,
+  channelId: 10,
+  templateId: 900,
+  authorId: null,
+  reviewerId: null,
+  publisherId: null,
+  lang: "ko",
+  postType: "health_info",
+  targetPersona: "30대 직장인",
+  status: "draft",
+  title: "원래 제목",
+  titleCandidates: null,
+  body: "원래 본문입니다.",
+  regenCount: 0,
+  ruleSnapshot: { ruleIds: [], version: "v0", exampleIds: [] },
+  detectedTerms: { blocks: [], warns: [], missing: [] },
+  sentPrompt: "===SYSTEM===\n...\n\n===USER===\n...",
+  model: "claude-test-model",
+  rejectReason: null,
+  publishedUrl: null,
+  urlCheck: null,
+  submittedAt: null,
+  reviewedAt: null,
+  publishedAt: null,
+  updatedAt: new Date("2026-09-15T00:00:00Z"),
+  createdAt: new Date("2026-09-14T00:00:00Z"),
+};
+
+const EDIT_DEPS_BASE = { productBaseUrl: "https://shop.banana-island.co.kr" };
+
+describe("editContent", () => {
+  it("존재하지 않는 id 는 404 NOT_FOUND 를 돌려주고 아무 것도 쓰지 않는다", async () => {
+    const { db, update, insert } = createEditDbMock({ contentRows: [] });
+
+    const result = await editContent({ ...EDIT_DEPS_BASE, db }, 999, { title: "새 제목" });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe("NOT_FOUND");
+      expect(result.error.details).toEqual({ resource: "content", id: 999 });
+    }
+    expect(update).not.toHaveBeenCalled();
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  it("published 는 409 INVALID_TRANSITION 을 돌려주고 아무 것도 쓰지 않는다", async () => {
+    const { db, update, insert } = createEditDbMock({
+      contentRows: [{ ...EDIT_BASE_ROW, status: "published" }],
+    });
+
+    const result = await editContent({ ...EDIT_DEPS_BASE, db }, 701, { title: "새 제목" });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe("INVALID_TRANSITION");
+      expect(result.error.details).toEqual({ from: "published" });
+    }
+    expect(update).not.toHaveBeenCalled();
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  it("body 가 아직 null 인 행(FR-005 생성 실패 재시도 대기 중)에 title-only 편집을 시도하면 409 INVALID_TRANSITION 을 돌려주고 아무 것도 쓰지 않는다", async () => {
+    const { db, update, insert } = createEditDbMock({
+      contentRows: [{ ...EDIT_BASE_ROW, body: null }],
+    });
+
+    const result = await editContent({ ...EDIT_DEPS_BASE, db }, 701, { title: "제목만 편집" });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe("INVALID_TRANSITION");
+      expect(result.error.details).toEqual({ from: "draft" });
+    }
+    expect(update).not.toHaveBeenCalled();
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  it("draft 에서 title 만 변경 — 성공, body 는 그대로, content_history 1건(reason:'manual_edit', 이전 title·body·sentPrompt·detectedTerms 보존), detectedTerms 는 (안 바뀐) 기존 body 기준으로 재계산되고, status 는 draft 그대로다", async () => {
+    const row = { ...EDIT_BASE_ROW };
+    const { db, insert, update, insertValuesCalls, updateSetCalls } = createEditDbMock({
+      contentRows: [row],
+      ruleRows: [],
+      updateResult: [{ updatedAt: new Date("2026-09-16T00:00:00Z") }],
+      historyResult: [{ versionNo: 1 }],
+    });
+
+    const result = await editContent({ ...EDIT_DEPS_BASE, db }, 701, { title: "새 제목" });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.title).toBe("새 제목");
+    expect(result.data.body).toBe(row.body);
+    expect(result.data.status).toBe("draft");
+    expect(result.data.validation.blocks).toEqual([]);
+    expect(result.data.historyCount).toBe(1);
+
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(updateSetCalls[0]).toMatchObject({ title: "새 제목", body: row.body, status: "draft" });
+
+    expect(insert).toHaveBeenCalledTimes(1);
+    expect(insertValuesCalls[0]).toMatchObject({
+      contentId: 701,
+      reason: "manual_edit",
+      title: row.title,
+      body: row.body,
+      sentPrompt: row.sentPrompt,
+      detectedTerms: row.detectedTerms,
+    });
+  });
+
+  it("body 만 변경 — 차단어 없는 새 본문이면 detectedTerms.blocks 가 빈 배열이고 title 은 그대로다", async () => {
+    const row = { ...EDIT_BASE_ROW };
+    const { db, updateSetCalls } = createEditDbMock({
+      contentRows: [row],
+      ruleRows: [],
+      updateResult: [{ updatedAt: new Date() }],
+      historyResult: [{ versionNo: 1 }],
+    });
+
+    const result = await editContent({ ...EDIT_DEPS_BASE, db }, 701, { body: "새로운 깨끗한 본문입니다." });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.title).toBe(row.title);
+    expect(result.data.body).toBe("새로운 깨끗한 본문입니다.");
+    expect(result.data.validation.blocks).toEqual([]);
+    expect(updateSetCalls[0]).toMatchObject({ title: row.title, body: "새로운 깨끗한 본문입니다." });
+  });
+
+  it("body 만 변경 — 차단어 있는 새 본문은 LLM 재시도 없이 그대로 저장되고 detectedTerms.blocks 에 반영된다(FR-006 자동 재생성 미적용)", async () => {
+    const row = { ...EDIT_BASE_ROW };
+    const { db } = createEditDbMock({
+      contentRows: [row],
+      ruleRows: [CURE_BAN_RULE],
+      updateResult: [{ updatedAt: new Date() }],
+      historyResult: [{ versionNo: 1 }],
+    });
+
+    const result = await editContent({ ...EDIT_DEPS_BASE, db }, 701, { body: "당뇨 완치 프로젝트 새 본문" });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.body).toBe("당뇨 완치 프로젝트 새 본문"); // 재시도로 바뀌지 않는다
+    expect(result.data.validation.blocks).toMatchObject([expect.objectContaining({ matched: "완치" })]);
+  });
+
+  it.each(["in_review", "approved"] as const)(
+    "%s 상태에서도 편집이 성공한다(published 만 막힘 확인용 대조군) — 상태는 편집 전 그대로 유지된다(rejected 가 아니므로)",
+    async (status) => {
+      const row = { ...EDIT_BASE_ROW, status };
+      const { db } = createEditDbMock({
+        contentRows: [row],
+        ruleRows: [],
+        updateResult: [{ updatedAt: new Date() }],
+        historyResult: [{ versionNo: 1 }],
+      });
+
+      const result = await editContent({ ...EDIT_DEPS_BASE, db }, 701, { title: `${status} 편집 제목` });
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.data.status).toBe(status);
+        expect(result.data.title).toBe(`${status} 편집 제목`);
+      }
+    },
+  );
+
+  it("rejected 에서 편집 성공 — 응답의 status 가 draft 로 바뀌고, content_history 에 reason:'rejected_edit' 1건이 남는다(PRD FR-011)", async () => {
+    const row = { ...EDIT_BASE_ROW, status: "rejected" };
+    const { db, insertValuesCalls } = createEditDbMock({
+      contentRows: [row],
+      ruleRows: [],
+      updateResult: [{ updatedAt: new Date() }],
+      historyResult: [{ versionNo: 2 }],
+    });
+
+    const result = await editContent({ ...EDIT_DEPS_BASE, db }, 701, { body: "수정된 본문" });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.status).toBe("draft");
+    expect(insertValuesCalls[0]).toMatchObject({ reason: "rejected_edit" });
+  });
+
+  it("approved 상태에서 편집 시 응답의 channelFormat 이 새 body 기준으로 재계산된다(기존 캐시된 값이 아니다)", async () => {
+    const row = { ...EDIT_BASE_ROW, status: "approved", body: "승인 전 원래 본문" };
+    const { db } = createEditDbMock({
+      contentRows: [row],
+      channelRows: [{ ...EDIT_CHANNEL_ROW, writeUrl: "https://blog.naver.com/write" }],
+      ruleRows: [],
+      updateResult: [{ updatedAt: new Date() }],
+      historyResult: [{ versionNo: 1 }],
+    });
+
+    const result = await editContent({ ...EDIT_DEPS_BASE, db }, 701, { body: "승인 후 새로 편집한 본문" });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.status).toBe("approved");
+    expect(result.data.channelFormat).not.toBeNull();
+    expect(result.data.channelFormat?.body).toBe(`승인 후 새로 편집한 본문\n\n${result.data.link}`);
+    expect(result.data.channelFormat?.writeUrl).toBe("https://blog.naver.com/write");
+  });
+
+  it("동시성: SELECT 로 읽은 뒤 UPDATE 시점에 title·body 가 달라져 있으면(가짜 db.update 가 0행 반환) 409 INVALID_TRANSITION 을 돌려주고 이력은 기록되지 않는다(title-only vs body-only 교차 경합 대표 케이스)", async () => {
+    const row = { ...EDIT_BASE_ROW };
+    const { db, insert } = createEditDbMock({
+      contentRows: [row],
+      ruleRows: [],
+      updateResult: [], // 0행 — 그 사이 다른 요청이 title 또는 body 를 먼저 바꿨다
+    });
+
+    const result = await editContent({ ...EDIT_DEPS_BASE, db }, 701, { title: "뒤늦게 도착한 편집" });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe("INVALID_TRANSITION");
+      expect(result.error.details).toEqual({ from: "draft" });
+    }
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  it("낙관적 잠금 UPDATE 의 where 가드는 id·status·title·regenCount·bodyUnchangedGuard 다섯 조건을 모두 포함한다(title-only 와 body-only 편집의 교차 lost-update 방지, regenCount 는 editContent·regenerateContentBody·transition()::submit 이 공유하는 05 code-review major 수리 가드축)", async () => {
+    const row = { ...EDIT_BASE_ROW };
+    const { db, updateWhereCalls } = createEditDbMock({
+      contentRows: [row],
+      ruleRows: [],
+      updateResult: [{ updatedAt: new Date() }],
+      historyResult: [{ versionNo: 1 }],
+    });
+
+    await editContent({ ...EDIT_DEPS_BASE, db }, 701, { title: "새 제목" });
+
+    expect(updateWhereCalls[0]).toEqual(
+      and(
+        eq(schema.contents.id, 701),
+        eq(schema.contents.status, "draft"),
+        eq(schema.contents.title, row.title as string),
+        eq(schema.contents.regenCount, row.regenCount as number),
+        eq(schema.contents.body, row.body as string),
+      ),
+    );
+  });
+
+  it("동시성 회귀: regenerateContentBody 가 먼저 커밋해 regenCount 가 SELECT 시점과 달라지면(가짜 db.update 가 0행 반환) title-only editContent 도 409 INVALID_TRANSITION 을 돌려주고 이력은 기록되지 않는다(regenCount 만 바뀌고 title·body 는 그대로인 경합 — 05 code-review major 수리가 막는 케이스)", async () => {
+    const row = { ...EDIT_BASE_ROW, regenCount: 1 }; // SELECT 시점 값 — 이미 한 번 regenerateContentBody 가 지나간 뒤라고 가정
+    const { db, insert, updateWhereCalls } = createEditDbMock({
+      contentRows: [row],
+      ruleRows: [],
+      // WHERE 의 regenCount 조건이 실제 DB 의 최신 값과 달라(다른 요청이 그 사이 다시 +1 했다)
+      // 매칭되는 행이 없다고 가정 — 0행 반환으로 시뮬레이션한다.
+      updateResult: [],
+    });
+
+    const result = await editContent({ ...EDIT_DEPS_BASE, db }, 701, { title: "제목만 편집" });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe("INVALID_TRANSITION");
+      expect(result.error.details).toEqual({ from: "draft" });
+    }
+    expect(insert).not.toHaveBeenCalled();
+    // WHERE 절 자체는 SELECT 시점 regenCount(1)로 조건이 걸렸는지 확인 — 이 값이 실제
+    // DB 최신 regenCount 와 다르면(동시 regenerateContentBody 가 먼저 커밋) 0행이 되어야 한다.
+    expect(updateWhereCalls[0]).toEqual(
+      and(
+        eq(schema.contents.id, 701),
+        eq(schema.contents.status, "draft"),
+        eq(schema.contents.title, row.title as string),
+        eq(schema.contents.regenCount, 1),
+        eq(schema.contents.body, row.body as string),
+      ),
+    );
   });
 });

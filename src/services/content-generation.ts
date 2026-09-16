@@ -29,13 +29,20 @@ import {
   LlmTitleCandidatesSchema,
   LlmTitleItemSchema,
   type CreateContentInput,
+  type EditContentInput,
   type LlmTitleItem,
   type RegenerateInput,
   type TitleRequest,
 } from "@/lib/schemas";
 import { buildUtmLink } from "@/lib/utm";
 import { validate, type ValidationResult } from "@/lib/validator";
-import { resolveContentLink, TRANSITIONS } from "@/services/content-workflow";
+import {
+  bodyUnchangedGuard,
+  resolveChannelFormat,
+  resolveContentLink,
+  statusAfterEdit,
+  TRANSITIONS,
+} from "@/services/content-workflow";
 import { resolveRules } from "@/services/rules";
 
 // 기존 소비자(src/app/api/contents/route.test.ts)가 ContentDetail 을 이 모듈 경로로도
@@ -762,6 +769,7 @@ export async function regenerateContentBody(
           eq(contents.id, contentId),
           eq(contents.status, row.status),
           eq(contents.regenCount, row.regenCount),
+          bodyUnchangedGuard(row.body),
         ),
       )
       .returning({ updatedAt: contents.updatedAt, regenCount: contents.regenCount });
@@ -827,5 +835,179 @@ export async function regenerateContentBody(
       }),
     );
     return { ok: false, error: { code: "INTERNAL", message: "본문 재생성 중 오류가 발생했습니다." } };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// FR-008 제목·본문 직접 편집 — editContent
+// ---------------------------------------------------------------------------
+
+/**
+ * FR-008 직접 편집 — 계약(_workspace/contract_fr-008-direct-edit.md) 「유닛 · editContent」.
+ * 외부 호출 없음(LLM 재시도는 하지 않는다) — 사람이 직접 쓴 값을 검증만 하고 그대로
+ * 저장한다. 낙관적 잠금 UPDATE(status·title·bodyUnchangedGuard 셋 다 토큰)가 성공한
+ * 뒤에만 content_history 에 UPDATE 전 값을 insert한다(ADR-002, regenerateContentBody 와
+ * 같은 순서).
+ */
+export async function editContent(
+  deps: { db: Db; productBaseUrl: string },
+  contentId: number,
+  input: EditContentInput,
+): Promise<Result<ContentDetail>> {
+  try {
+    const selectQuery = deps.db.select().from(contents);
+    selectQuery.where(eq(contents.id, contentId));
+    const rows = await selectQuery;
+    const row = rows[0];
+
+    if (!row) {
+      return {
+        ok: false,
+        error: {
+          code: "NOT_FOUND",
+          message: "콘텐츠를 찾을 수 없습니다.",
+          details: { resource: "content", id: contentId },
+        },
+      };
+    }
+
+    if (row.status === "published") {
+      return {
+        ok: false,
+        error: {
+          code: "INVALID_TRANSITION",
+          message: "현재 상태에서는 편집할 수 없습니다.",
+          details: { from: row.status },
+        },
+      };
+    }
+
+    if (row.body === null) {
+      return {
+        ok: false,
+        error: {
+          code: "INVALID_TRANSITION",
+          message: "현재 상태에서는 편집할 수 없습니다.",
+          details: { from: row.status },
+        },
+      };
+    }
+
+    const nextTitle = input.title ?? row.title;
+    const nextBody = input.body ?? row.body;
+    const nextStatus = statusAfterEdit(row.status);
+
+    const rulesResult = await resolveRules(
+      { db: deps.db },
+      { channelId: row.channelId, lang: row.lang, productId: row.productId ?? undefined },
+    );
+    if (!rulesResult.ok) {
+      return { ok: false, error: rulesResult.error };
+    }
+    const rules = rulesResult.data;
+
+    const validation = validate(nextBody, { must: rules.must, ban: rules.ban });
+
+    // resolveContentLink·resolveChannelFormat 은 UPDATE 보다 먼저 호출한다(05 code-review
+    // data round 2 CONTRACT_DEFECT 수리 — regenerateContentBody 의 F-1 TX_BOUNDARY 수리와
+    // 같은 패턴). UPDATE·이력 INSERT 가 둘 다 성공한 뒤에 호출하면, 이 호출이 던질 때
+    // 이미 커밋된 쓰기가 있는데도 INTERNAL 을 반환해 "실패하면 아무것도 안 바뀐다"는
+    // 보장이 깨진다. resolveContentLink 는 row(channelId/productId, 편집으로 안 바뀜)
+    // 그대로 넘긴다. resolveChannelFormat 은 nextStatus 가 approved 일 때만 계산하고,
+    // body 는 편집 후 값(nextBody)을 반영한 임시 객체로 넘긴다(link 는 이미 계산된 값을
+    // 그대로 재사용 — 재계산하지 않는다).
+    const link = await resolveContentLink(deps, row);
+    const channelFormat =
+      nextStatus === "approved" ? await resolveChannelFormat(deps, { ...row, body: nextBody }, link) : null;
+
+    // 낙관적 잠금 UPDATE — WHERE 의 status 는 row.status(전이 전 조건), SET 의 status 는
+    // nextStatus(전이 결과). title 가드는 "title-only 편집"과 "body-only 편집"이 거의
+    // 동시에 들어올 때 서로의 변경을 지우는 lost-update 를 막기 위한 것이다(body 만
+    // 가드하면 이 교차 경합을 못 막는다). regenCount 가드는 05 code-review major 수리(data)
+    // — editContent 는 regenCount 를 SET 하지 않지만(값은 그대로 두지만) WHERE 에는
+    // 넣는다. 이게 없으면 editContent(title 만 가드, body 안 건드림)와
+    // regenerateContentBody(regenCount 만 가드, title 안 건드림)가 서로 다른 축을 봐서
+    // 같은 draft 행에 동시에 성공할 수 있고, 그러면 두 content_history INSERT 의
+    // version_no MAX+1 서브쿼리가 경합해 같은 version_no 가 중복 삽입될 위험이 있다
+    // (content_history 는 (content_id, version_no) 유니크 제약이 없다). regenCount 를
+    // 공통 가드 축으로 추가하면 editContent·regenerateContentBody·transition()::submit
+    // 셋 다 서로의 body/regenCount 변경을 감지하게 되어 이 경합이 막힌다.
+    const lockedUpdateRows = await deps.db
+      .update(contents)
+      .set({
+        title: nextTitle,
+        body: nextBody,
+        status: nextStatus,
+        detectedTerms: validation,
+        updatedAt: sql`now()`,
+      })
+      .where(
+        and(
+          eq(contents.id, contentId),
+          eq(contents.status, row.status),
+          eq(contents.title, row.title),
+          eq(contents.regenCount, row.regenCount),
+          bodyUnchangedGuard(row.body),
+        ),
+      )
+      .returning({ updatedAt: contents.updatedAt });
+
+    const updated = lockedUpdateRows[0];
+    if (!updated) {
+      return {
+        ok: false,
+        error: {
+          code: "INVALID_TRANSITION",
+          message: "다른 요청이 먼저 이 콘텐츠를 변경했습니다.",
+          details: { from: row.status },
+        },
+      };
+    }
+
+    // UPDATE 성공 확인 뒤에만 이력을 쓴다 — UPDATE 전 값(row.*)을 저장한다. versionNo 는
+    // TOCTOU 방지를 위해 INSERT 문 안의 서브쿼리로 계산한다(regenerateContentBody 와 동일).
+    const historyInsertRows = await deps.db
+      .insert(contentHistory)
+      .values({
+        contentId,
+        versionNo: sql<number>`(select coalesce(max(version_no), 0) + 1 from content_history where content_id = ${contentId})`,
+        reason: row.status === "rejected" ? "rejected_edit" : "manual_edit",
+        title: row.title,
+        body: row.body,
+        sentPrompt: row.sentPrompt,
+        detectedTerms: row.detectedTerms,
+        changedBy: null,
+      })
+      .returning({ versionNo: contentHistory.versionNo });
+    const historyCount = historyInsertRows[0]?.versionNo ?? 0;
+
+    const updatedRow: ContentsRow = {
+      ...row,
+      title: nextTitle,
+      body: nextBody,
+      status: nextStatus,
+      detectedTerms: validation,
+      updatedAt: updated.updatedAt,
+    };
+
+    const data = toContentDetail(updatedRow, {
+      validation,
+      link,
+      isExample: false,
+      historyCount,
+      autoRegenerated: row.regenCount > 0,
+      channelFormat,
+    });
+
+    return { ok: true, data };
+  } catch (err) {
+    console.error(
+      JSON.stringify({
+        event: "content_edit_failed",
+        contentId,
+        message: err instanceof Error ? err.message : String(err),
+      }),
+    );
+    return { ok: false, error: { code: "INTERNAL", message: "콘텐츠 편집 중 오류가 발생했습니다." } };
   }
 }
