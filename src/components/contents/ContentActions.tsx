@@ -31,6 +31,7 @@ export function ContentActions({
   const [registerAsExample, setRegisterAsExample] = useState(false);
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState("");
+  const [instruction, setInstruction] = useState("");
   const [publishUrl, setPublishUrl] = useState("");
   const [publishResult, setPublishResult] = useState<{ urlCheck: "ok" | "unreachable" | "skipped" | null } | null>(
     null,
@@ -89,6 +90,28 @@ export function ContentActions({
       setState({ pending: false, error: null });
       setRejecting(false);
       setReason("");
+      router.refresh();
+    } catch {
+      setState({ pending: false, error: "요청을 보내지 못했습니다." });
+    }
+  }
+
+  async function runRegenerate() {
+    setState({ pending: true, error: null });
+    try {
+      const trimmed = instruction.trim();
+      const res = await fetch(`/api/contents/${contentId}/regenerate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(trimmed ? { instruction: trimmed } : {}),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setState({ pending: false, error: json.error?.message ?? "요청을 처리하지 못했습니다." });
+        return;
+      }
+      setState({ pending: false, error: null });
+      setInstruction("");
       router.refresh();
     } catch {
       setState({ pending: false, error: "요청을 보내지 못했습니다." });
@@ -204,9 +227,22 @@ export function ContentActions({
       ) : null}
 
       {status === "draft" || status === "rejected" ? (
-        <Button small disabled={state.pending} onClick={() => void run("submit")}>
-          검수 요청
-        </Button>
+        <>
+          <div id="regenerateBox">
+            <textarea
+              value={instruction}
+              onChange={(e) => setInstruction(e.target.value)}
+              placeholder="다시 만들 때 지시(선택)"
+              disabled={state.pending}
+            />
+            <Button variant="ghost" small disabled={state.pending} onClick={() => void runRegenerate()}>
+              다시 만들기
+            </Button>
+          </div>
+          <Button small disabled={state.pending} onClick={() => void run("submit")}>
+            검수 요청
+          </Button>
+        </>
       ) : null}
 
       {state.error ? <Notice variant="bad">{state.error}</Notice> : null}

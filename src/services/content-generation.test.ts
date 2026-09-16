@@ -32,7 +32,13 @@ import {
 import type { BrandRuleRow } from "@/lib/rules-merge";
 import { buildUtmLink } from "@/lib/utm";
 import { resolveRules } from "@/services/rules";
-import { BODY_TOTAL_BUDGET_MS, MIN_BODY_REGEN_BUDGET_MS, createContentWithBody, generateTitles } from "./content-generation";
+import {
+  BODY_TOTAL_BUDGET_MS,
+  MIN_BODY_REGEN_BUDGET_MS,
+  createContentWithBody,
+  generateTitles,
+  regenerateContentBody,
+} from "./content-generation";
 
 // ---------------------------------------------------------------------------
 // DB 스텁 헬퍼 — src/services/rules.test.ts 와 동일한 패턴(그 파일을 export 하지 않으므로
@@ -1275,5 +1281,335 @@ describe("createContentWithBody", () => {
     );
     const [, userNoProduct] = generateJsonNoProduct.mock.calls[0];
     expect(userNoProduct).toContain("브랜드 소식");
+  });
+});
+
+// =============================================================================
+// 계약: FR-007(run 20260916-1614-ad59) 「유닛 · src/services/content-generation.ts::regenerateContentBody」
+//
+// 외부 경계(계약): LlmClient(generateJson)·Db(drizzle)·resolveRules(실물 통과, 위 스위트들과
+// 같은 스파이 래핑)·validate(실물, CURE_BAN_RULE 로 차단 트리거) 뿐이다.
+//
+// DB 쿼리 형태(계약이 고정하지 않은 부분, 이 파일이 고른 가정 — 01-plan §4/계약 「테스트로
+// 반드시 덮어야 하는 케이스」의 요구를 충족하는 가장 자연스러운 해석):
+//   - select().from(contents) 로 대상 행을 1회 조회한다(id 로 필터) — 행이 없으면 NOT_FOUND.
+//   - 상태 검사(draft/rejected 인지)는 이 SELECT 직후, 어떤 LLM 호출보다 먼저 이뤄진다 —
+//     이 코드베이스의 다른 모든 서비스 함수(createContentWithBody·transition)와 같은 순서:
+//     비용이 드는 외부 호출 전에 저렴한 검증부터 한다.
+//   - resolveRules(실물)가 내부적으로 salesChannels·brandRules 를 조회한다(위 스위트들과 동일).
+//   - promptTemplates·brandExamples·products 는 이 함수가 조회할 수도, 안 할 수도 있다(계약이
+//     고정하지 않음) — 기본값 빈 배열을 주어 조회하든 안 하든 안전하게 통과하게 한다.
+//   - 성공 시 UPDATE(contents) 1회(낙관적 잠금 — status+regenCount 이중 가드, 계약 「저장
+//     순서」)와 그것이 성공했을 때만 INSERT(content_history) 1회가 일어난다. UPDATE 가
+//     0행이면(경합) INSERT 는 일어나지 않는다.
+//   - regenCount 는 성공한 모든 경로(FR-006 자동 재생성이 있든 없든, 성공했든 흡수됐든)에서
+//     항상 "조회 시점 값 + 1" 이다(계약 「성공 시 ... regenCount +1」— 이 함수 자신의
+//     regenerate 행위 자체를 세는 것이지 FR-006 내부 재시도 횟수를 세는 게 아니다).
+// =============================================================================
+
+function createRegenerateDbMock(opts: {
+  contentRows?: Record<string, unknown>[]; // 대상 콘텐츠 SELECT 결과 — 빈 배열 = NOT_FOUND
+  channelRows?: ChannelRow[];
+  ruleRows?: BrandRuleRow[];
+  updateResult?: Record<string, unknown>[] | Error; // 낙관적 잠금 UPDATE 결과 — 빈 배열 = 경합 실패
+}) {
+  const insertValuesCalls: unknown[] = [];
+  const updateSetCalls: unknown[] = [];
+
+  const select = vi.fn(() => ({
+    from: vi.fn((table: unknown) => {
+      if (table === schema.contents) return makeChainNode(opts.contentRows ?? []);
+      if (table === schema.salesChannels) return makeChainNode(opts.channelRows ?? []);
+      if (table === schema.brandRules) return makeChainNode(opts.ruleRows ?? []);
+      if (table === schema.contentHistory) return makeChainNode([{ count: 0 }]);
+      if (table === schema.brandExamples) return makeChainNode([]);
+      if (table === schema.promptTemplates) return makeChainNode([]);
+      if (table === schema.products) return makeChainNode([]);
+      throw new Error(`unexpected select().from() table in test mock: ${String(table)}`);
+    }),
+  }));
+
+  const update = vi.fn((table: unknown) => {
+    if (table !== schema.contents) throw new Error("unexpected update() table in test mock");
+    return {
+      set: vi.fn((vals: unknown) => {
+        updateSetCalls.push(vals);
+        return {
+          where: vi.fn(() => ({
+            returning: vi.fn(() => {
+              if (opts.updateResult instanceof Error) return makeThrowingNode(opts.updateResult);
+              return makeChainNode(opts.updateResult ?? []);
+            }),
+          })),
+        };
+      }),
+    };
+  });
+
+  const insert = vi.fn((table: unknown) => {
+    if (table !== schema.contentHistory) throw new Error("unexpected insert() table in test mock");
+    return {
+      values: vi.fn((vals: unknown) => {
+        insertValuesCalls.push(vals);
+        return makeChainNode([{}]);
+      }),
+    };
+  });
+
+  return {
+    db: { select, insert, update } as unknown as Db,
+    select,
+    insert,
+    update,
+    insertValuesCalls,
+    updateSetCalls,
+  };
+}
+
+const REGEN_BASE_ROW: Record<string, unknown> = {
+  id: 601,
+  publishPlanId: null,
+  sourceContentId: null,
+  productId: null,
+  channelId: 10,
+  templateId: 900,
+  authorId: null,
+  reviewerId: null,
+  publisherId: null,
+  lang: "ko",
+  postType: "health_info",
+  targetPersona: "30대 직장인",
+  status: "draft",
+  title: "여름철 든든한 간식",
+  titleCandidates: [
+    { title: "여름철 든든한 간식", angle: "다이어트 중에도 부담 없이" },
+    { title: "제목2", angle: "앵글2" },
+    { title: "제목3", angle: "앵글3" },
+  ],
+  body: "기존 본문입니다.",
+  regenCount: 0,
+  ruleSnapshot: { ruleIds: [1], version: "v1", exampleIds: [] },
+  detectedTerms: { blocks: [], warns: [], missing: [] },
+  sentPrompt: "===SYSTEM===\n이전 시스템\n\n===USER===\n이전 사용자",
+  model: "claude-test-model",
+  rejectReason: null,
+  publishedUrl: null,
+  urlCheck: null,
+  submittedAt: null,
+  reviewedAt: null,
+  publishedAt: null,
+  updatedAt: new Date("2026-09-15T00:00:00Z"),
+  createdAt: new Date("2026-09-14T00:00:00Z"),
+};
+
+const REGEN_DEPS_BASE = {
+  model: "claude-test-model",
+  productBaseUrl: "https://shop.banana-island.co.kr",
+};
+
+describe("regenerateContentBody", () => {
+  it("존재하지 않는 id 는 404 NOT_FOUND 를 돌려주고 LLM 호출·쓰기가 전혀 없다", async () => {
+    const { db, update, insert } = createRegenerateDbMock({ contentRows: [] });
+    const generateJson = vi.fn();
+    const llm = { generateJson };
+
+    const result = await regenerateContentBody({ ...REGEN_DEPS_BASE, db, llm }, 999, {});
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe("NOT_FOUND");
+    expect(generateJson).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  it.each(["in_review", "approved", "published"] as const)(
+    "상태가 %s 면 409 INVALID_TRANSITION 을 돌려주고 LLM 호출·본문·이력 변경이 전혀 없다",
+    async (status) => {
+      const { db, update, insert } = createRegenerateDbMock({
+        contentRows: [{ ...REGEN_BASE_ROW, status }],
+      });
+      const generateJson = vi.fn();
+      const llm = { generateJson };
+
+      const result = await regenerateContentBody({ ...REGEN_DEPS_BASE, db, llm }, 601, {});
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.code).toBe("INVALID_TRANSITION");
+      expect(generateJson).not.toHaveBeenCalled();
+      expect(update).not.toHaveBeenCalled();
+      expect(insert).not.toHaveBeenCalled();
+      expect(resolveRules).not.toHaveBeenCalled();
+    },
+  );
+
+  it("draft 상태에서 성공 — 본문 갱신·regenCount +1·content_history 1건(reason:'regenerate', 이전 본문·sentPrompt·detectedTerms 보존)", async () => {
+    const { db, insert, insertValuesCalls } = createRegenerateDbMock({
+      contentRows: [REGEN_BASE_ROW],
+      channelRows: [{ id: 10, country: "KR" }],
+      ruleRows: [],
+      updateResult: [{ updatedAt: new Date("2026-09-16T00:00:00Z"), regenCount: 1 }],
+    });
+    const generateJson = vi.fn().mockResolvedValue({ body: "다시 쓴 새 본문입니다." });
+    const llm = { generateJson };
+
+    const result = await regenerateContentBody(
+      { ...REGEN_DEPS_BASE, db, llm },
+      601,
+      { instruction: "더 발랄한 톤으로" },
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.body).toBe("다시 쓴 새 본문입니다.");
+    expect(result.data.regenCount).toBe(1);
+
+    expect(insert).toHaveBeenCalledTimes(1);
+    expect(insertValuesCalls[0]).toMatchObject({
+      contentId: 601,
+      reason: "regenerate",
+      body: REGEN_BASE_ROW.body,
+      sentPrompt: REGEN_BASE_ROW.sentPrompt,
+      detectedTerms: REGEN_BASE_ROW.detectedTerms,
+    });
+  });
+
+  it("rejected 상태에서도 성공한다(draft 로 취급)", async () => {
+    const { db } = createRegenerateDbMock({
+      contentRows: [{ ...REGEN_BASE_ROW, status: "rejected" }],
+      channelRows: [{ id: 10, country: "KR" }],
+      ruleRows: [],
+      updateResult: [{ updatedAt: new Date(), regenCount: 1 }],
+    });
+    const generateJson = vi.fn().mockResolvedValue({ body: "다시 쓴 본문" });
+    const llm = { generateJson };
+
+    const result = await regenerateContentBody({ ...REGEN_DEPS_BASE, db, llm }, 601, {});
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("instruction 없이 호출해도 성공하고(선택값), 프롬프트에 '지시 없음' 안내 문구가 쓰인다", async () => {
+    const { db } = createRegenerateDbMock({
+      contentRows: [REGEN_BASE_ROW],
+      channelRows: [{ id: 10, country: "KR" }],
+      ruleRows: [],
+      updateResult: [{ updatedAt: new Date(), regenCount: 1 }],
+    });
+    const generateJson = vi.fn().mockResolvedValue({ body: "지시 없이 다시 쓴 본문" });
+    const llm = { generateJson };
+
+    const result = await regenerateContentBody({ ...REGEN_DEPS_BASE, db, llm }, 601, {});
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.body).toBe("지시 없이 다시 쓴 본문");
+    expect(generateJson).toHaveBeenCalledTimes(1);
+    const [, user] = generateJson.mock.calls[0];
+    expect(user).toContain("(지시 없음 — 전반적으로 다듬어 다시 작성)");
+  });
+
+  it("1차 LLM 호출이 차단어를 포함한 본문을 내면 자동 재생성 1회가 일어나 재검증된 결과가 저장된다(autoRegenerated:true)", async () => {
+    const { db, insertValuesCalls } = createRegenerateDbMock({
+      contentRows: [REGEN_BASE_ROW],
+      channelRows: [{ id: 10, country: "KR" }],
+      ruleRows: [CURE_BAN_RULE],
+      updateResult: [{ updatedAt: new Date(), regenCount: 1 }],
+    });
+    const generateJson = vi
+      .fn()
+      .mockResolvedValueOnce({ body: "당뇨 완치 효과가 있습니다" })
+      .mockResolvedValueOnce({ body: "건강 관리에 도움을 주는 본문입니다" });
+    const llm = { generateJson };
+
+    const result = await regenerateContentBody(
+      { ...REGEN_DEPS_BASE, db, llm },
+      601,
+      { instruction: "완치라는 표현 좀 넣어줘" },
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.body).toBe("건강 관리에 도움을 주는 본문입니다");
+    expect(result.data.autoRegenerated).toBe(true);
+    expect(result.data.regenCount).toBe(1);
+    expect(generateJson).toHaveBeenCalledTimes(2);
+    expect(insertValuesCalls[0]).toMatchObject({ reason: "regenerate", body: REGEN_BASE_ROW.body });
+  });
+
+  it("자동 재생성마저 실패/타임아웃이면 흡수하고 1차 결과(차단 포함)를 그대로 저장한다(요청 자체는 성공)", async () => {
+    const { db, insert } = createRegenerateDbMock({
+      contentRows: [REGEN_BASE_ROW],
+      channelRows: [{ id: 10, country: "KR" }],
+      ruleRows: [CURE_BAN_RULE],
+      updateResult: [{ updatedAt: new Date(), regenCount: 1 }],
+    });
+    const generateJson = vi
+      .fn()
+      .mockResolvedValueOnce({ body: "당뇨 완치 프로젝트 본문" })
+      .mockRejectedValueOnce(new LlmTimeoutError("timeout"));
+    const llm = { generateJson };
+
+    const result = await regenerateContentBody({ ...REGEN_DEPS_BASE, db, llm }, 601, {});
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.body).toBe("당뇨 완치 프로젝트 본문");
+      expect(result.data.regenCount).toBe(1);
+    }
+    expect(generateJson).toHaveBeenCalledTimes(2);
+    expect(insert).toHaveBeenCalledTimes(1); // 흡수돼도 전체 요청은 성공 — 이력은 여전히 남는다
+  });
+
+  it("regen_count 가 조회 시점과 UPDATE 시점 사이에 달라지면(동시 재생성 경합) 409 INVALID_TRANSITION 을 돌려주고 이력은 기록되지 않는다", async () => {
+    const { db, insert } = createRegenerateDbMock({
+      contentRows: [REGEN_BASE_ROW],
+      channelRows: [{ id: 10, country: "KR" }],
+      ruleRows: [],
+      updateResult: [], // 0행 — 그 사이 regen_count 가 달라졌다(경합)
+    });
+    const generateJson = vi.fn().mockResolvedValue({ body: "새 본문" });
+    const llm = { generateJson };
+
+    const result = await regenerateContentBody({ ...REGEN_DEPS_BASE, db, llm }, 601, {});
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe("INVALID_TRANSITION");
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  it("1차 LLM 호출이 LlmTimeoutError 를 던지면 504 LLM_TIMEOUT 을 돌려주고 DB 에 아무것도 쓰지 않는다(이전 본문 유지)", async () => {
+    const { db, update, insert } = createRegenerateDbMock({
+      contentRows: [REGEN_BASE_ROW],
+      channelRows: [{ id: 10, country: "KR" }],
+      ruleRows: [],
+    });
+    const generateJson = vi.fn().mockRejectedValueOnce(new LlmTimeoutError("timeout"));
+    const llm = { generateJson };
+
+    const result = await regenerateContentBody({ ...REGEN_DEPS_BASE, db, llm }, 601, {});
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe("LLM_TIMEOUT");
+    expect(update).not.toHaveBeenCalled();
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["LlmFailedError", () => new LlmFailedError("failed")],
+    ["그 밖의 오류(기타)", () => new Error("boom")],
+  ])("1차 LLM 호출이 %s 를 던지면 502 LLM_FAILED 를 돌려주고 DB 에 아무것도 쓰지 않는다", async (_label, makeError) => {
+    const { db, update, insert } = createRegenerateDbMock({
+      contentRows: [REGEN_BASE_ROW],
+      channelRows: [{ id: 10, country: "KR" }],
+      ruleRows: [],
+    });
+    const generateJson = vi.fn().mockRejectedValueOnce(makeError());
+    const llm = { generateJson };
+
+    const result = await regenerateContentBody({ ...REGEN_DEPS_BASE, db, llm }, 601, {});
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe("LLM_FAILED");
+    expect(update).not.toHaveBeenCalled();
+    expect(insert).not.toHaveBeenCalled();
   });
 });
