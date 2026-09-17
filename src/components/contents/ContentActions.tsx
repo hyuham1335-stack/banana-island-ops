@@ -112,7 +112,7 @@ export function ContentActions({
       }
       setState({ pending: false, error: null });
       setInstruction("");
-      router.refresh();
+      router.push(`/write?contentId=${contentId}`);
     } catch {
       setState({ pending: false, error: "요청을 보내지 못했습니다." });
     }

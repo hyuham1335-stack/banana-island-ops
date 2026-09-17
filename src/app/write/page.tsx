@@ -1,10 +1,13 @@
 import { getDb } from "@/lib/db/client";
+import { getEnv } from "@/lib/env";
 import { RulesResolveQuerySchema } from "@/lib/schemas";
 import type { PostType } from "@/components/plan-format";
+import type { ContentDetail } from "@/lib/content-detail";
 import { ContentComposer } from "@/components/write/ContentComposer";
 import type { PlanBannerData } from "@/components/write/PlanBanner";
 import { Notice } from "@/components/ui/Notice";
 import { listActiveProducts, listContentChannels } from "@/services/content-options";
+import { getContentDetail } from "@/services/content-workflow";
 
 export const dynamic = "force-dynamic";
 
@@ -24,56 +27,86 @@ export default async function WritePage({
   const db = getDb();
   const [channels, products] = await Promise.all([listContentChannels({ db }), listActiveProducts({ db })]);
 
-  const parsedQuery = RulesResolveQuerySchema.safeParse({
-    channelId: params.channelId,
-    lang: params.lang,
-    productId: params.productId,
-  });
+  // 콘텐츠 상세의 "다시 만들기" 에서 넘어온 경우 — 제목·채널·제품 등은 기존 콘텐츠에서
+  // 그대로 가져오고, ContentComposer 를 titles 단계를 건너뛴 body 단계로 초기화한다.
+  const contentIdParam = params.contentId ? Number(params.contentId) : null;
 
   let channelId: number;
   let lang: "ko" | "en";
   let productId: number | null;
+  let postType: PostType;
+  let plan: PlanBannerData | null;
+  let initialContent: ContentDetail | null = null;
+  let initialTopicMemo = params.topicMemo ?? "";
 
-  if (parsedQuery.success) {
-    channelId = parsedQuery.data.channelId;
-    lang = parsedQuery.data.lang;
-    productId = parsedQuery.data.productId ?? null;
-  } else {
-    // 계획 없이 여는 "즉석 생성" — 목업의 page-write 기본값과 같다: 첫 콘텐츠형 채널을 기본으로.
-    const fallback = channels[0];
-    if (!fallback) {
+  if (contentIdParam !== null && Number.isInteger(contentIdParam) && contentIdParam > 0) {
+    const env = getEnv();
+    const result = await getContentDetail({ db, productBaseUrl: env.PRODUCT_BASE_URL }, contentIdParam);
+    if (!result.ok) {
       return (
         <>
           <div className="page-head">
             <h1 className="page-title">콘텐츠 만들기</h1>
           </div>
-          <Notice variant="bad">콘텐츠형 채널이 없습니다. 브랜드 기준에서 채널을 먼저 등록해 주세요.</Notice>
+          <Notice variant="bad">{result.error.message}</Notice>
         </>
       );
     }
-    channelId = fallback.id;
-    lang = fallback.lang;
-    productId = null;
+    initialContent = result.data;
+    channelId = result.data.channelId;
+    lang = result.data.lang;
+    productId = result.data.productId;
+    postType = result.data.postType;
+    plan = null;
+    initialTopicMemo = "";
+  } else {
+    const parsedQuery = RulesResolveQuerySchema.safeParse({
+      channelId: params.channelId,
+      lang: params.lang,
+      productId: params.productId,
+    });
+
+    if (parsedQuery.success) {
+      channelId = parsedQuery.data.channelId;
+      lang = parsedQuery.data.lang;
+      productId = parsedQuery.data.productId ?? null;
+    } else {
+      // 계획 없이 여는 "즉석 생성" — 목업의 page-write 기본값과 같다: 첫 콘텐츠형 채널을 기본으로.
+      const fallback = channels[0];
+      if (!fallback) {
+        return (
+          <>
+            <div className="page-head">
+              <h1 className="page-title">콘텐츠 만들기</h1>
+            </div>
+            <Notice variant="bad">콘텐츠형 채널이 없습니다. 브랜드 기준에서 채널을 먼저 등록해 주세요.</Notice>
+          </>
+        );
+      }
+      channelId = fallback.id;
+      lang = fallback.lang;
+      productId = null;
+    }
+
+    postType = asPostType(params.postType) ?? DEFAULT_POST_TYPE;
+    const planId = params.planId ? Number(params.planId) : null;
+
+    plan =
+      parsedQuery.success && planId !== null && asPostType(params.postType) !== null
+        ? {
+            planId,
+            scheduledDate: params.scheduledDate ?? "",
+            channelId,
+            channelName: params.channelName ?? "",
+            lang,
+            productId,
+            productName: params.productName ?? null,
+            postType: asPostType(params.postType) as PostType,
+            ownerName: params.ownerName ?? null,
+            sheetRowKey: params.sheetRowKey ?? "",
+          }
+        : null;
   }
-
-  const postType = asPostType(params.postType) ?? DEFAULT_POST_TYPE;
-  const planId = params.planId ? Number(params.planId) : null;
-
-  const plan: PlanBannerData | null =
-    parsedQuery.success && planId !== null && asPostType(params.postType) !== null
-      ? {
-          planId,
-          scheduledDate: params.scheduledDate ?? "",
-          channelId,
-          channelName: params.channelName ?? "",
-          lang,
-          productId,
-          productName: params.productName ?? null,
-          postType: asPostType(params.postType) as PostType,
-          ownerName: params.ownerName ?? null,
-          sheetRowKey: params.sheetRowKey ?? "",
-        }
-      : null;
 
   return (
     <>
@@ -93,7 +126,8 @@ export default async function WritePage({
         initialLang={lang}
         initialProductId={productId}
         initialPostType={postType}
-        initialTopicMemo={params.topicMemo ?? ""}
+        initialTopicMemo={initialTopicMemo}
+        initialContent={initialContent}
       />
     </>
   );
