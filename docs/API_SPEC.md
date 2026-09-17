@@ -217,7 +217,7 @@ ChannelFormat {
 
 ### POST `/api/contents/{id}/publish`
 
-요청 `PublishInput { publishedUrl?: string /* url */ }` → 200 `{ data: ContentDetail }` — `urlCheck` 는 `ok | unreachable | skipped`. **unreachable 이어도 200 이고 상태는 `published`.** `approved` 외 409.
+요청 `PublishInput { publishedUrl?: string /* url */ }` → 200 `{ data: ContentDetail }` — `urlCheck` 는 `ok | skipped`(성공 응답에는 `unreachable` 이 나오지 않는다). URL 이 있고 HEAD 확인이 `unreachable` 이면 422 `URL_UNREACHABLE`(상태는 `approved` 로 유지, 재시도 가능). URL 없음(`skipped`)이거나 `ok` 면 200, `published`. `approved` 외 409.
 
 ### POST `/api/contents/{id}/new-version`
 
@@ -265,6 +265,7 @@ AdPerformanceInput { channelId, periodStart, periodEnd, spend: string, revenue: 
 | `NOT_FOUND` | 404 | 콘텐츠·계획·채널·원가표가 없음 | `{ resource, id }` |
 | `INVALID_TRANSITION` | 409 | 현재 상태에서 허용되지 않는 액션, 또는 계획에 이미 콘텐츠 연결 | `{ from, action }` |
 | `BLOCKED_TERMS_REMAIN` | 422 | 차단 등급 표현이 남아 검수 요청 불가 | `{ blocks: Finding[] }` |
+| `URL_UNREACHABLE` | 422 | 발행 URL 을 HEAD 로 확인할 수 없음 | `{ publishedUrl }` |
 | `LLM_FAILED` | 502 | LLM 호출 실패 또는 출력이 스키마 위반(재시도 후) | `{ contentId?, attempt }` |
 | `LLM_TIMEOUT` | 504 | LLM 타임아웃 (제목 20초 · 본문 45초) | `{ contentId? }` |
 | `SHEET_FETCH_FAILED` | 502 | Sheets API 실패·권한 없음 | `{ lastSyncAt }` |

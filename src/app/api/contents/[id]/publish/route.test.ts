@@ -219,6 +219,29 @@ describe("POST /api/contents/{id}/publish", () => {
     });
   });
 
+  it("Result.err(URL_UNREACHABLE) 면 422 + { error } 봉투를 돌려준다 — URL 이 실제로 확인되지 않으면 발행완료로 전이되지 않는다", async () => {
+    vi.mocked(transition).mockResolvedValue({
+      ok: false,
+      error: {
+        code: "URL_UNREACHABLE",
+        message: "URL을 확인할 수 없어 발행을 완료하지 못했습니다.",
+        details: { publishedUrl: "https://blog.naver.com/post/dead" },
+      },
+    });
+
+    const { request, ctx } = reqWithBody("1", { publishedUrl: "https://blog.naver.com/post/dead" });
+    const res = await POST(request, ctx);
+
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({
+      error: {
+        code: "URL_UNREACHABLE",
+        message: "URL을 확인할 수 없어 발행을 완료하지 못했습니다.",
+        details: { publishedUrl: "https://blog.naver.com/post/dead" },
+      },
+    });
+  });
+
   it("Result.err(INTERNAL) 면 500 + { error } 봉투를 돌려준다", async () => {
     vi.mocked(transition).mockResolvedValue({
       ok: false,

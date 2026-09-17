@@ -32,9 +32,7 @@ export function ContentActions({
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState("");
   const [publishUrl, setPublishUrl] = useState("");
-  const [publishResult, setPublishResult] = useState<{ urlCheck: "ok" | "unreachable" | "skipped" | null } | null>(
-    null,
-  );
+  const [publishResult, setPublishResult] = useState<{ urlCheck: "ok" | "skipped" | null } | null>(null);
 
   async function run(action: "submit" | "cancel-review") {
     setState({ pending: true, error: null });
@@ -220,14 +218,7 @@ export function ContentActions({
         </div>
       ) : null}
 
-      {publishResult ? (
-        <>
-          {publishResult.urlCheck === "ok" ? <Notice variant="ok">URL 접속을 확인했습니다.</Notice> : null}
-          {publishResult.urlCheck === "unreachable" ? (
-            <Notice variant="warn">URL 에 접속할 수 없습니다. 링크를 다시 확인하세요.</Notice>
-          ) : null}
-        </>
-      ) : null}
+      {publishResult?.urlCheck === "ok" ? <Notice variant="ok">URL 접속을 확인했습니다.</Notice> : null}
 
       {status === "published" ? (
         <Button small disabled={state.pending} onClick={() => void runNewVersion()}>
