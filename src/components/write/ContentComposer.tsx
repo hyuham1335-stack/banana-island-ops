@@ -98,6 +98,7 @@ export function ContentComposer({
     pending: false,
     error: null,
   });
+  const [regenerateInstruction, setRegenerateInstruction] = useState("");
 
   function handleChannelChange(id: number) {
     setChannelId(id);
@@ -237,6 +238,36 @@ export function ContentComposer({
     void runReviewAction("cancel-review");
   }
 
+  // FR-007 — ContentActions.tsx 의 runRegenerate 와 같은 요청이지만, 이미 /write 에
+  // 있으므로 성공 후 router.push 대신 gen state 를 그 자리에서 갱신한다.
+  async function regenerateBody() {
+    if (gen.phase !== "body") return;
+    setReviewAction({ pending: true, error: null });
+    try {
+      const trimmed = regenerateInstruction.trim();
+      const res = await fetch(`/api/contents/${gen.content.id}/regenerate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(trimmed ? { instruction: trimmed } : {}),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setReviewAction({ pending: false, error: json.error?.message ?? "요청을 처리하지 못했습니다." });
+        return;
+      }
+      const content: ContentDetail = json.data;
+      setGen((prev) =>
+        prev.phase === "body"
+          ? { ...prev, content, draftTitle: content.title, draftBody: content.body ?? "", edited: false }
+          : prev,
+      );
+      setRegenerateInstruction("");
+      setReviewAction({ pending: false, error: null });
+    } catch {
+      setReviewAction({ pending: false, error: "요청을 보내지 못했습니다." });
+    }
+  }
+
   const diff = plan !== null && (plan.channelId !== channelId || plan.lang !== lang || plan.productId !== productId);
   const channelName = channels.find((c) => c.id === channelId)?.name ?? "";
   const contextLabel = `${productLabel(products.find((p) => p.id === productId)?.name ?? null)} · ${channelName} · ${
@@ -338,6 +369,9 @@ export function ContentComposer({
           reviewAction={reviewAction}
           onSubmitReview={submitForReview}
           onCancelReview={cancelReview}
+          regenerateInstruction={regenerateInstruction}
+          onRegenerateInstructionChange={setRegenerateInstruction}
+          onRegenerate={regenerateBody}
         />
       </div>
     </>

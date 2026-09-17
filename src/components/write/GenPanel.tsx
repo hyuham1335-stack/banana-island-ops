@@ -25,6 +25,9 @@ export function GenPanel({
   reviewAction,
   onSubmitReview,
   onCancelReview,
+  regenerateInstruction,
+  onRegenerateInstructionChange,
+  onRegenerate,
 }: {
   gen: GenState;
   contextLabel: string;
@@ -37,6 +40,9 @@ export function GenPanel({
   reviewAction: { pending: boolean; error: string | null };
   onSubmitReview: () => void;
   onCancelReview: () => void;
+  regenerateInstruction: string;
+  onRegenerateInstructionChange: (value: string) => void;
+  onRegenerate: () => void;
 }) {
   const [copied, setCopied] = useState(false);
 
@@ -197,6 +203,17 @@ export function GenPanel({
 
               {reviewAction.error ? <Notice variant="bad">{reviewAction.error}</Notice> : null}
 
+              {gen.content.status !== "in_review" ? (
+                <div id="regenerateBox">
+                  <textarea
+                    value={regenerateInstruction}
+                    onChange={(e) => onRegenerateInstructionChange(e.target.value)}
+                    placeholder="다시 만들 때 지시(선택)"
+                    disabled={reviewAction.pending}
+                  />
+                </div>
+              ) : null}
+
               <div className="btn-row" style={{ marginBottom: 10 }}>
                 {gen.content.status === "in_review" ? (
                   <Button variant="ghost" small onClick={onCancelReview} disabled={reviewAction.pending}>
@@ -214,9 +231,11 @@ export function GenPanel({
                     검수 요청
                   </Button>
                 )}
-                <Button variant="ghost" small disabled disabledReason="다음 단계에서 연결됩니다">
-                  다시 만들기
-                </Button>
+                {gen.content.status !== "in_review" ? (
+                  <Button variant="ghost" small disabled={reviewAction.pending} onClick={onRegenerate}>
+                    다시 만들기
+                  </Button>
+                ) : null}
               </div>
               <div className="btn-row">
                 {gen.content.link ? (
