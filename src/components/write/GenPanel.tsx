@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { Button } from "@/components/ui/Button";
 import { Notice } from "@/components/ui/Notice";
 import { Checks } from "@/components/write/Checks";
@@ -231,9 +232,15 @@ export function GenPanel({
                     {copied ? "복사됨" : "링크 복사"}
                   </Button>
                 ) : null}
-                <Button variant="ghost" small onClick={onBackToTitles}>
-                  제목으로 돌아가기
-                </Button>
+                {gen.items.length === 0 ? (
+                  <Link href={`/contents/${gen.content.id}`} className="btn ghost small">
+                    콘텐츠 상세로
+                  </Link>
+                ) : (
+                  <Button variant="ghost" small onClick={onBackToTitles}>
+                    제목으로 돌아가기
+                  </Button>
+                )}
               </div>
             </div>
           </>

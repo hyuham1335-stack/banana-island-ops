@@ -63,6 +63,7 @@ export function ContentComposer({
   initialProductId,
   initialPostType,
   initialTopicMemo,
+  initialContent,
 }: {
   channels: ChannelOption[];
   products: ProductOption[];
@@ -72,6 +73,7 @@ export function ContentComposer({
   initialProductId: number | null;
   initialPostType: PostType;
   initialTopicMemo: string;
+  initialContent: ContentDetail | null;
 }) {
   const [channelId, setChannelId] = useState(initialChannelId);
   const [lang, setLang] = useState<"ko" | "en">(initialLang);
@@ -79,7 +81,19 @@ export function ContentComposer({
   const [postType, setPostType] = useState<PostType>(initialPostType);
   const [topicMemo, setTopicMemo] = useState(initialTopicMemo);
   const [target, setTarget] = useState<TargetState>({ value: "", dirty: false, auto: "", confirmVisible: false });
-  const [gen, setGen] = useState<GenState>({ phase: "idle" });
+  const [gen, setGen] = useState<GenState>(
+    initialContent
+      ? {
+          phase: "body",
+          items: [],
+          chosenIndex: 0,
+          content: initialContent,
+          draftTitle: initialContent.title,
+          draftBody: initialContent.body ?? "",
+          edited: false,
+        }
+      : { phase: "idle" },
+  );
   const [reviewAction, setReviewAction] = useState<{ pending: boolean; error: string | null }>({
     pending: false,
     error: null,
