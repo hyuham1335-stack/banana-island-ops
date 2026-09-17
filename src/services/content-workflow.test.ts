@@ -53,9 +53,11 @@ import * as schema from "@/lib/db/schema";
 import type { ContentsRow } from "@/lib/content-detail";
 import type { BrandRuleRow } from "@/lib/rules-merge";
 import { resolveRules } from "@/services/rules";
+import { buildUtmLink } from "@/lib/utm";
 import {
   approveContent,
   bodyUnchangedGuard,
+  createNewVersion,
   getContentDetail,
   listContents,
   resolveContentLink,
@@ -171,11 +173,15 @@ function createDbMock(opts: {
   userRows?: { id: number }[];
   // approveContent 의 brandExamples insert 가 예외를 던지는 경로(계약 케이스 15)를 재현한다.
   brandExampleInsertShouldThrow?: boolean;
+  // FR-014(createNewVersion) 5단계 — insert(contents).values(...).returning(...) 의 결과.
+  // 미지정 시 기본 { id: 2, createdAt, updatedAt } 한 행.
+  contentsInsertReturning?: Record<string, unknown>[];
 }) {
   const updateSetCalls: unknown[] = [];
   const updateWhereCalls: unknown[] = [];
   const insertValuesCalls: unknown[] = [];
   const brandExampleInsertCalls: unknown[] = [];
+  const contentsInsertValuesCalls: unknown[] = [];
   let contentsSelectCallIndex = 0;
 
   const select = vi.fn(() => ({
@@ -240,6 +246,23 @@ function createDbMock(opts: {
         }),
       };
     }
+    if (table === schema.contents) {
+      // FR-014 계약 「유닛 · createNewVersion」5단계 — insert(contents).values(...).returning(...).
+      return {
+        values: vi.fn((vals: unknown) => {
+          contentsInsertValuesCalls.push(vals);
+          return {
+            returning: vi.fn(() =>
+              makeChainNode(
+                opts.contentsInsertReturning ?? [
+                  { id: 2, createdAt: new Date("2026-09-17T00:10:00Z"), updatedAt: new Date("2026-09-17T00:10:00Z") },
+                ],
+              ),
+            ),
+          };
+        }),
+      };
+    }
     throw new Error("unexpected insert() table in test mock");
   });
 
@@ -252,6 +275,7 @@ function createDbMock(opts: {
     updateWhereCalls,
     insertValuesCalls,
     brandExampleInsertCalls,
+    contentsInsertValuesCalls,
   };
 }
 
@@ -1377,5 +1401,226 @@ describe("transition — publish", () => {
       expect(result.data.publishedUrl).toBeNull();
       expect(result.data.urlCheck).toBe("skipped");
     }
+  });
+});
+
+// -----------------------------------------------------------------------------
+// createNewVersion — FR-014 계약(_workspace/contract_fr-014-new-version.md) 「유닛 ·
+// createNewVersion(deps: {db, productBaseUrl}, contentId)」. 8단계 알고리즘:
+//   1. select().from(contents) — 없으면 NOT_FOUND.
+//   2. row.status !== "published" 면 INVALID_TRANSITION(원본 불변).
+//   3. (먼저) resolveRules → 실패하면 그대로 전파, 이 시점까지 쓰기 없음. 성공하면
+//      validate(row.body, {must,ban}) 로 detectedTerms 계산.
+//   4. (그 다음) 원본의 publish_plan_id 를 낙관적 잠금으로 비우는 UPDATE — publishPlanId 가
+//      null 이든 아니든 항상 실행한다(null 이면 isNull 가드, 아니면 eq 가드). 0행이면
+//      INVALID_TRANSITION.
+//   5. 새 draft 행 INSERT(sourceContentId=원본id, publishPlanId=원본의 옛 값, body·
+//      ruleSnapshot·sentPrompt·model 은 원본 그대로 복사, detectedTerms 는 3단계 결과,
+//      나머지 워크플로 필드는 리셋).
+//   6. resolveContentLink(deps, {id:새id, productId, channelId}).
+//   7. toContentDetail 조립(channelFormat: null — draft 는 항상 null).
+//   8. { ok: true, data }.
+//
+// DB 모킹은 위 createDbMock 을 재사용한다 — 5단계 INSERT 는 opts.contentsInsertReturning 으로
+// 확장한 insert(schema.contents) 분기가 처리하고, contentsInsertValuesCalls 로 INSERT 값을
+// 관측한다. resolveRules 는 파일 상단에서 vi.mock(importOriginal) 로 스파이돼 있어 기본은 실물
+// 그대로 통과하고(ruleRows 로 성공 결과를 구성), 케이스 6 만 mockResolvedValueOnce 로 실패를
+// 주입한다(736행의 transition() submit 동형 테스트와 같은 모양).
+// -----------------------------------------------------------------------------
+
+describe("createNewVersion", () => {
+  const INSERT_RETURNING = { id: 2, createdAt: new Date("2026-09-17T00:10:00Z"), updatedAt: new Date("2026-09-17T00:10:00Z") };
+
+  it("정상 — 발행 콘텐츠 + plan 연결 있음: 새 draft 행이 생성되고 plan 연결이 새 행으로 이전되며, 원본은 publish_plan_id 만(게이트 UPDATE) 건드려진다", async () => {
+    const row = contentRow({
+      status: "published",
+      publishPlanId: 77,
+      title: "원본 제목",
+      body: "원본 본문입니다.",
+      productId: null,
+      channelId: 10,
+    });
+    const { db, update, insert, updateSetCalls, updateWhereCalls, contentsInsertValuesCalls } = createDbMock({
+      contentRows: [row],
+      ruleRows: [],
+      channelRows: [CHANNEL_ROW],
+      updateReturningResult: [{ id: 1 }],
+      contentsInsertReturning: [INSERT_RETURNING],
+    });
+
+    const result = await createNewVersion({ db, ...DEPS }, 1);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    expect(result.data.id).toBe(2);
+    expect(result.data.sourceContentId).toBe(1);
+    expect(result.data.publishPlanId).toBe(77); // 4단계에서 비워지기 전 원래 값이 새 행으로 이전
+    expect(result.data.status).toBe("draft");
+    expect(result.data.title).toBe("원본 제목 (v2)");
+    expect(result.data.body).toBe(row.body);
+    expect(result.data.ruleSnapshot).toEqual(row.ruleSnapshot);
+    expect(result.data.sentPrompt).toBe(row.sentPrompt);
+    expect(result.data.model).toBe(row.model);
+    expect(result.data.regenCount).toBe(0);
+    expect(result.data.rejectReason).toBeNull();
+    expect(result.data.publishedUrl).toBeNull();
+    expect(result.data.urlCheck).toBeNull();
+    expect(result.data.submittedAt).toBeNull();
+    expect(result.data.reviewedAt).toBeNull();
+    expect(result.data.publishedAt).toBeNull();
+    expect(result.data.reviewerId).toBeNull();
+    expect(result.data.publisherId).toBeNull();
+    expect(result.data.channelFormat).toBeNull(); // draft 는 항상 null
+    expect(result.data.validation).toEqual({ blocks: [], warns: [], missing: [] });
+    expect(result.data.createdAt).toBe(INSERT_RETURNING.createdAt.toISOString());
+    expect(result.data.updatedAt).toBe(INSERT_RETURNING.updatedAt.toISOString());
+    expect(result.data.link).toBe(
+      buildUtmLink({
+        baseUrl: PRODUCT_BASE_URL,
+        productCode: null,
+        utmSource: CHANNEL_ROW.utmSource,
+        utmMedium: CHANNEL_ROW.utmMedium,
+        contentId: 2, // 6단계는 새 id 로 링크를 계산한다
+      }),
+    );
+
+    // 4단계 — 원본의 publish_plan_id 를 비우는 낙관적 잠금 UPDATE. status='published' 게이트 +
+    // 원래 plan 값 가드(eq) — id·status·guard 순서는 계약 알고리즘 4단계 그대로.
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(updateSetCalls[0]).toMatchObject({ publishPlanId: null });
+    expect(updateWhereCalls[0]).toEqual(
+      and(eq(schema.contents.id, 1), eq(schema.contents.status, "published"), eq(schema.contents.publishPlanId, 77)),
+    );
+
+    // 5단계 — 새 행 INSERT. contents 테이블에만 한 번(content_history·brandExamples 없음).
+    expect(insert).toHaveBeenCalledTimes(1);
+    expect(contentsInsertValuesCalls[0]).toMatchObject({
+      sourceContentId: 1,
+      publishPlanId: 77,
+      productId: row.productId,
+      channelId: row.channelId,
+      templateId: row.templateId,
+      lang: row.lang,
+      postType: row.postType,
+      targetPersona: row.targetPersona,
+      authorId: row.authorId,
+      status: "draft",
+      title: "원본 제목 (v2)",
+      titleCandidates: null,
+      body: row.body,
+      ruleSnapshot: row.ruleSnapshot,
+      sentPrompt: row.sentPrompt,
+      model: row.model,
+      regenCount: 0,
+      rejectReason: null,
+      publishedUrl: null,
+      urlCheck: null,
+      submittedAt: null,
+      reviewedAt: null,
+      publishedAt: null,
+      reviewerId: null,
+      publisherId: null,
+    });
+  });
+
+  it("plan 연결이 없는 발행 콘텐츠(publishPlanId: null) — 정상 생성되고, 4단계 잠금 UPDATE 가 isNull 가드로 생략 없이 실행된다", async () => {
+    const row = contentRow({ status: "published", publishPlanId: null, channelId: 10, productId: null });
+    const { db, update, updateWhereCalls } = createDbMock({
+      contentRows: [row],
+      ruleRows: [],
+      channelRows: [CHANNEL_ROW],
+      updateReturningResult: [{ id: 1 }],
+      contentsInsertReturning: [INSERT_RETURNING],
+    });
+
+    const result = await createNewVersion({ db, ...DEPS }, 1);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.publishPlanId).toBeNull();
+
+    // publishPlanId 가 이미 null 이어도 "비울 게 없다"고 UPDATE 를 생략하지 않는다 — status='published'
+    // 자체가 동시 호출을 가르는 게이트이기 때문(계약 「유닛」4단계).
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(updateWhereCalls[0]).toEqual(
+      and(eq(schema.contents.id, 1), eq(schema.contents.status, "published"), isNull(schema.contents.publishPlanId)),
+    );
+  });
+
+  it("NOT_FOUND — 존재하지 않는 id", async () => {
+    const { db, update, insert } = createDbMock({ contentRows: [] });
+
+    const result = await createNewVersion({ db, ...DEPS }, 999);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe("NOT_FOUND");
+      expect(result.error.details).toEqual({ resource: "content", id: 999 });
+    }
+    expect(update).not.toHaveBeenCalled();
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  it.each(["draft", "in_review", "approved", "rejected"] as const)(
+    "INVALID_TRANSITION — status='%s' 인 콘텐츠(published 아님)는 새 버전을 만들 수 없고 원본도 건드리지 않는다",
+    async (status) => {
+      const row = contentRow({ status });
+      const { db, update, insert } = createDbMock({ contentRows: [row] });
+
+      const result = await createNewVersion({ db, ...DEPS }, 1);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.code).toBe("INVALID_TRANSITION");
+        expect(result.error.details).toEqual({ from: status, action: "new_version" });
+      }
+      expect(update).not.toHaveBeenCalled();
+      expect(insert).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ["plan 있음", 55],
+    ["plan 없음", null],
+  ] as const)(
+    "INVALID_TRANSITION(경합) — 4단계 잠금 UPDATE 가 0행이면(%s) 새 행을 만들지 않고 INVALID_TRANSITION 을 반환한다",
+    async (_label, publishPlanId) => {
+      const row = contentRow({ status: "published", publishPlanId });
+      const { db, insert } = createDbMock({
+        contentRows: [row],
+        ruleRows: [],
+        channelRows: [CHANNEL_ROW],
+        updateReturningResult: [], // 0행 — 다른 요청이 먼저 이 게이트를 통과했다
+      });
+
+      const result = await createNewVersion({ db, ...DEPS }, 1);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.code).toBe("INVALID_TRANSITION");
+        expect(result.error.details).toEqual({ from: "published", action: "new_version" });
+      }
+      expect(insert).not.toHaveBeenCalled(); // 새 행 INSERT 없음
+    },
+  );
+
+  it("resolveRules 가 실패(NOT_FOUND)를 반환하면 그 오류를 그대로 전파하고, 원본의 publish_plan_id·status 는 변경되지 않으며 새 행도 INSERT 되지 않는다(계약의 핵심 불변식 — 3·4단계 순서)", async () => {
+    const row = contentRow({ status: "published", publishPlanId: 77, channelId: 999 });
+    const { db, update, insert } = createDbMock({ contentRows: [row], channelRows: [] });
+
+    const result = await createNewVersion({ db, ...DEPS }, 1);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe("NOT_FOUND"); // resolveRules 자신의 채널-없음 오류
+      expect(result.error.details).toEqual({ resource: "channel", id: 999 });
+    }
+    expect(resolveRules).toHaveBeenCalledWith(
+      { db, ...DEPS },
+      { channelId: 999, lang: "ko", productId: undefined },
+    );
+    // 3단계(resolveRules) 실패 시점까지 DB 에 아무 쓰기도 없었다 — 원본 UPDATE 도, 새 행 INSERT 도 없다.
+    expect(update).not.toHaveBeenCalled();
+    expect(insert).not.toHaveBeenCalled();
   });
 });
