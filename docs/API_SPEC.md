@@ -196,7 +196,9 @@ ChannelFormat {
 
 ### POST `/api/contents/{id}/regenerate`
 
-요청 `RegenerateInput { instruction?: string }` → 200 `{ data: ContentDetail }`. `in_review`·`approved`·`published` 는 409. LLM 실패 시 이전 본문 유지, 502/504.
+요청 `RegenerateInput { instruction?: string, title?: string, angle?: string, titleCandidates?: {title, angle}[] /* 3 */ }` → 200 `{ data: ContentDetail }`. `in_review`·`approved`·`published` 는 409. LLM 실패 시 이전 본문 유지, 502/504.
+
+`title`이 있으면(=콘텐츠 상세 "다시 만들기"에서 제목을 새로 골라 본문까지 다시 만드는 경우) `instruction`은 무시하고, 기존 본문을 지시문으로 고치는 대신 `POST /api/contents`의 초안 생성과 같은 제목·앵글 기반 프롬프트로 본문을 새로 만든다. `title`·`titleCandidates`도 함께 갱신한다 — **콘텐츠 행은 그대로(같은 id)**이고 새 행을 만들지 않는다(ADR-007, 계획:콘텐츠 1:1 유지).
 
 ### POST `/api/contents/{id}/submit`
 

@@ -237,10 +237,22 @@ export type PublishInput = z.infer<typeof PublishInputSchema>;
 
 /**
  * POST /api/contents/{id}/regenerate 요청 검증 — FR-007 계약(run 20260916-1614-ad59).
+ * title 이 있으면(다시 만들기에서 제목을 새로 골라 본문까지 다시 만드는 경우) instruction
+ * 대신 이 분기를 탄다(docs/API_SPEC.md) — title·angle·titleCandidates 제약은
+ * CreateContentInputSchema 와 동일 근거.
  */
-export const RegenerateInputSchema = z.object({
-  instruction: z.string().trim().max(500).optional(),
-});
+export const RegenerateInputSchema = z
+  .object({
+    instruction: z.string().trim().max(500).optional(),
+    title: z.string().trim().min(1).max(200).optional(),
+    angle: z.string().trim().min(1).max(300).optional(),
+    titleCandidates: z.tuple([LlmTitleItemSchema, LlmTitleItemSchema, LlmTitleItemSchema]).optional(),
+  })
+  // title 이 있으면 항상 angle·titleCandidates 와 함께 온다(화면이 세 값을 한 번에 보낸다) —
+  // 부분적으로만 오면 서비스가 무엇을 만들지 알 수 없으므로 여기서 막는다.
+  .refine((v) => v.title === undefined || (v.angle !== undefined && v.titleCandidates !== undefined), {
+    message: "title 이 있으면 angle·titleCandidates 도 함께 필요합니다.",
+  });
 
 export type RegenerateInput = z.infer<typeof RegenerateInputSchema>;
 

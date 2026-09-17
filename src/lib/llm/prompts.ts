@@ -122,8 +122,13 @@ export function renderPromptTemplate(
 /**
  * FR-005 본문 생성 user 프롬프트 — buildTitlesUserPrompt 와 같은 태그 경계 방어 원리.
  * renderedTemplate 은 이미 {타깃} 부분만 이스케이프된 상태로 들어온다.
+ * Pick 으로 좁힌 이유 — regenerateContentBody 의 title-분기(FR-007)도 이 함수를 쓰는데,
+ * publishPlanId·titleCandidates 는 프롬프트에 쓰이지 않고 그 분기엔 자연스러운 값도 없다.
  */
-export function buildBodyUserPrompt(renderedTemplate: string, input: CreateContentInput): string {
+export function buildBodyUserPrompt(
+  renderedTemplate: string,
+  input: Pick<CreateContentInput, "productId" | "channelId" | "lang" | "postType" | "topicMemo" | "title" | "angle">,
+): string {
   return [
     `제품 ID: ${input.productId ?? "지정 없음"}`,
     `채널 ID: ${input.channelId}`,

@@ -166,22 +166,31 @@ export function ContentComposer({
     const { items, chosenIndex, chosenTitle } = gen;
     setGen({ phase: "body-loading", items, chosenIndex, chosenTitle });
     try {
-      const res = await fetch("/api/contents", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          publishPlanId: plan?.planId ?? null,
-          productId,
-          channelId,
-          lang,
-          postType,
-          topicMemo,
-          targetPersona: target.value,
-          title: chosenTitle,
-          angle: items[chosenIndex].angle,
-          titleCandidates: items,
-        }),
-      });
+      // initialContent 가 있으면(=콘텐츠 상세 "다시 만들기"로 들어온 경우) 새 콘텐츠를
+      // 만들지 않고 같은 콘텐츠를 제목·앵글 기반으로 다시 만든다(FR-007 title-분기) —
+      // POST /api/contents 로 만들면 계획-콘텐츠 1:1(ADR-007)이 깨진다.
+      const res = await (initialContent !== null
+        ? fetch(`/api/contents/${initialContent.id}/regenerate`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ title: chosenTitle, angle: items[chosenIndex].angle, titleCandidates: items }),
+          })
+        : fetch("/api/contents", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              publishPlanId: plan?.planId ?? null,
+              productId,
+              channelId,
+              lang,
+              postType,
+              topicMemo,
+              targetPersona: target.value,
+              title: chosenTitle,
+              angle: items[chosenIndex].angle,
+              titleCandidates: items,
+            }),
+          }));
       const json = await res.json();
       if (!res.ok) {
         setGen({ phase: "body-error", message: json.error?.message ?? "본문을 만들지 못했습니다.", items, chosenIndex, chosenTitle });
@@ -204,6 +213,17 @@ export function ContentComposer({
       }
       return prev;
     });
+  }
+
+  // "다시 만들기"(initialContent)로 들어와 아직 제목 후보가 없는 경우(gen.items 가 비어
+  // 있음) "제목으로 돌아가기"는 되돌아갈 후보 자체가 없으므로 새로 받는다(requestTitles,
+  // LLM 호출 있음). 후보가 이미 있으면 지금처럼 로컬 전환만 한다(LLM 호출 없음).
+  function backToTitlesOrRetitle() {
+    if (gen.phase === "body" && gen.items.length === 0) {
+      void requestTitles();
+      return;
+    }
+    backToTitles();
   }
 
   function editBodyDraft(patch: Partial<{ title: string; body: string }>) {
@@ -350,11 +370,13 @@ export function ContentComposer({
 
           <AutoBox channelId={channelId} productId={productId} lang={lang} onResolved={handleResolved} />
 
-          <div className="btn-row">
-            <Button onClick={requestTitles} disabled={gen.phase === "titles-loading"}>
-              제목 추천 받기
-            </Button>
-          </div>
+          {initialContent === null ? (
+            <div className="btn-row">
+              <Button onClick={requestTitles} disabled={gen.phase === "titles-loading"}>
+                제목 추천 받기
+              </Button>
+            </div>
+          ) : null}
         </Panel>
 
         <GenPanel
@@ -364,7 +386,7 @@ export function ContentComposer({
           onEditTitle={editTitle}
           onGenerateBody={generateBody}
           onRetitle={requestTitles}
-          onBackToTitles={backToTitles}
+          onBackToTitles={backToTitlesOrRetitle}
           onEditBodyDraft={editBodyDraft}
           reviewAction={reviewAction}
           onSubmitReview={submitForReview}

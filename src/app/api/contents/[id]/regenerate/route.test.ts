@@ -156,6 +156,34 @@ describe("POST /api/contents/{id}/regenerate", () => {
     expect(input).toEqual({ instruction: "더 발랄한 톤으로" });
   });
 
+  it("title·angle·titleCandidates 를 함께 주면 통과하고 그대로 regenerateContentBody 에 전달된다(다시 만들기에서 제목부터 다시 만드는 경우)", async () => {
+    vi.mocked(regenerateContentBody).mockResolvedValue({ ok: true, data: REGEN_RESULT });
+    const titleCandidates = [
+      { title: "새 제목1", angle: "새 앵글1" },
+      { title: "새 제목2", angle: "새 앵글2" },
+      { title: "새 제목3", angle: "새 앵글3" },
+    ];
+
+    const { request, ctx } = reqFor("601", { title: "새 제목1", angle: "새 앵글1", titleCandidates });
+    const res = await POST(request, ctx);
+
+    expect(res.status).toBe(200);
+    expect(regenerateContentBody).toHaveBeenCalledTimes(1);
+    const [, id, input] = vi.mocked(regenerateContentBody).mock.calls[0];
+    expect(id).toBe(601);
+    expect(input).toEqual({ title: "새 제목1", angle: "새 앵글1", titleCandidates });
+  });
+
+  it("title 만 있고 angle·titleCandidates 가 없으면 400 VALIDATION_ERROR 를 돌려주고 regenerateContentBody 를 호출하지 않는다", async () => {
+    const { request, ctx } = reqFor("601", { title: "새 제목1" });
+    const res = await POST(request, ctx);
+
+    expect(res.status).toBe(400);
+    const resBody = await res.json();
+    expect(resBody.error.code).toBe("VALIDATION_ERROR");
+    expect(regenerateContentBody).not.toHaveBeenCalled();
+  });
+
   it("Result.err(NOT_FOUND) 면 404 + { error } 봉투를 돌려준다", async () => {
     vi.mocked(regenerateContentBody).mockResolvedValue({
       ok: false,

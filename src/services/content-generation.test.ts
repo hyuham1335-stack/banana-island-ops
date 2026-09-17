@@ -29,6 +29,7 @@ import {
   LlmTitleCandidatesSchema,
   LlmTitleItemSchema,
   type CreateContentInput,
+  type LlmTitleItem,
 } from "@/lib/schemas";
 import type { BrandRuleRow } from "@/lib/rules-merge";
 import { buildUtmLink } from "@/lib/utm";
@@ -70,6 +71,10 @@ function makeChainNode(resolvedValue: unknown, delayMs = 0) {
 interface ChannelRow {
   id: number;
   country: string;
+  // title-분기(regenerateContentBody)가 자체적으로 조회하는 컬럼 — 그 분기를 안 타는
+  // 기존 테스트는 그대로 {id, country} 만 준다(선택 필드라 초과 프로퍼티 오류가 안 난다).
+  name?: string;
+  linkPolicy?: "inline" | "bio" | "none";
 }
 
 function createDbMock(opts: {
@@ -1314,7 +1319,11 @@ function createRegenerateDbMock(opts: {
   channelRows?: ChannelRow[];
   ruleRows?: BrandRuleRow[];
   updateResult?: Record<string, unknown>[] | Error; // 낙관적 잠금 UPDATE 결과 — 빈 배열 = 경합 실패
+  templateQueue?: TemplateRow[][]; // title-분기 전용(channelId+lang 시도 → 공통 시도 순서로 소비)
+  exampleRows?: ExampleRow[];
+  productRows?: ProductDetailRow[];
 }) {
+  const templateQueue = [...(opts.templateQueue ?? [])];
   const insertValuesCalls: unknown[] = [];
   const updateSetCalls: unknown[] = [];
   const updateWhereCalls: unknown[] = [];
@@ -1325,9 +1334,9 @@ function createRegenerateDbMock(opts: {
       if (table === schema.salesChannels) return makeChainNode(opts.channelRows ?? []);
       if (table === schema.brandRules) return makeChainNode(opts.ruleRows ?? []);
       if (table === schema.contentHistory) return makeChainNode([{ count: 0 }]);
-      if (table === schema.brandExamples) return makeChainNode([]);
-      if (table === schema.promptTemplates) return makeChainNode([]);
-      if (table === schema.products) return makeChainNode([]);
+      if (table === schema.brandExamples) return makeChainNode(opts.exampleRows ?? []);
+      if (table === schema.promptTemplates) return makeChainNode(templateQueue.shift() ?? []);
+      if (table === schema.products) return makeChainNode(opts.productRows ?? []);
       throw new Error(`unexpected select().from() table in test mock: ${String(table)}`);
     }),
   }));
@@ -1648,6 +1657,125 @@ describe("regenerateContentBody", () => {
     if (!result.ok) expect(result.error.code).toBe("LLM_FAILED");
     expect(update).not.toHaveBeenCalled();
     expect(insert).not.toHaveBeenCalled();
+  });
+
+  // 계약: 콘텐츠 상세 "다시 만들기" 화면에서 제목부터 다시 받아 본문까지 새로 만드는 경우 —
+  // title-분기(ADR-007 계획:콘텐츠 1:1 유지 — 새 행을 만들지 않고 같은 contentId 를 UPDATE).
+  describe("title 분기", () => {
+    const NEW_TITLE_CANDIDATES: [LlmTitleItem, LlmTitleItem, LlmTitleItem] = [
+      { title: "새 제목1", angle: "새 앵글1" },
+      { title: "새 제목2", angle: "새 앵글2" },
+      { title: "새 제목3", angle: "새 앵글3" },
+    ];
+
+    it("title·angle·titleCandidates 를 주면 지시문 대신 제목·앵글 기반으로 본문을 새로 만들고, 같은 contentId 를 UPDATE 한다(새 행 없음, publishPlanId 유지)", async () => {
+      const planLinkedRow = { ...REGEN_BASE_ROW, publishPlanId: 55 };
+      const { db, insert, update, insertValuesCalls, updateSetCalls } = createRegenerateDbMock({
+        contentRows: [planLinkedRow],
+        channelRows: [{ id: 10, country: "KR", name: "카카오스토어", linkPolicy: "inline" }],
+        ruleRows: [],
+        templateQueue: [[TEMPLATE_ROW]],
+        exampleRows: [],
+        updateResult: [{ updatedAt: new Date("2026-09-17T00:00:00Z"), regenCount: 1 }],
+      });
+      const generateJson = vi.fn().mockResolvedValue({ body: "새 제목으로 다시 쓴 본문" });
+      const llm = { generateJson };
+
+      const result = await regenerateContentBody(
+        { ...REGEN_DEPS_BASE, db, llm },
+        601,
+        { title: "새 제목1", angle: "새 앵글1", titleCandidates: NEW_TITLE_CANDIDATES },
+      );
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.data.id).toBe(601); // 같은 contentId — 새 행 없음
+      expect(result.data.publishPlanId).toBe(55); // 계획 연결 유지 — 1:1 안 깨짐
+      expect(result.data.title).toBe("새 제목1");
+      expect(result.data.body).toBe("새 제목으로 다시 쓴 본문");
+      expect(result.data.regenCount).toBe(1);
+
+      expect(update).toHaveBeenCalledTimes(1);
+      expect(insert).toHaveBeenCalledTimes(1); // content_history 1건
+      expect(updateSetCalls[0]).toMatchObject({ title: "새 제목1", titleCandidates: NEW_TITLE_CANDIDATES });
+      expect(insertValuesCalls[0]).toMatchObject({
+        contentId: 601,
+        reason: "regenerate",
+        title: REGEN_BASE_ROW.title, // UPDATE 전 제목 보존
+        body: REGEN_BASE_ROW.body, // UPDATE 전 본문 보존
+      });
+    });
+
+    it("instruction 없이 title 만 와도 지시문 경로를 타지 않는다(생성된 프롬프트에 기존 본문을 고치라는 지시가 없다)", async () => {
+      const { db } = createRegenerateDbMock({
+        contentRows: [REGEN_BASE_ROW],
+        channelRows: [{ id: 10, country: "KR", name: "카카오스토어", linkPolicy: "inline" }],
+        ruleRows: [],
+        templateQueue: [[TEMPLATE_ROW]],
+        exampleRows: [],
+        updateResult: [{ updatedAt: new Date(), regenCount: 1 }],
+      });
+      const generateJson = vi.fn().mockResolvedValue({ body: "본문" });
+      const llm = { generateJson };
+
+      await regenerateContentBody(
+        { ...REGEN_DEPS_BASE, db, llm },
+        601,
+        { title: "새 제목1", angle: "새 앵글1", titleCandidates: NEW_TITLE_CANDIDATES },
+      );
+
+      const [, user] = generateJson.mock.calls[0];
+      expect(user).toContain("새 제목1");
+      expect(user).toContain("새 앵글1");
+      expect(user).not.toContain("지시 없음");
+    });
+
+    it.each(["in_review", "approved", "published"] as const)(
+      "title 을 줘도 상태가 %s 면 409 INVALID_TRANSITION 을 돌려주고 LLM 호출·쓰기가 전혀 없다",
+      async (status) => {
+        const { db, update, insert } = createRegenerateDbMock({
+          contentRows: [{ ...REGEN_BASE_ROW, status }],
+        });
+        const generateJson = vi.fn();
+        const llm = { generateJson };
+
+        const result = await regenerateContentBody(
+          { ...REGEN_DEPS_BASE, db, llm },
+          601,
+          { title: "새 제목1", angle: "새 앵글1", titleCandidates: NEW_TITLE_CANDIDATES },
+        );
+
+        expect(result.ok).toBe(false);
+        if (!result.ok) expect(result.error.code).toBe("INVALID_TRANSITION");
+        expect(generateJson).not.toHaveBeenCalled();
+        expect(update).not.toHaveBeenCalled();
+        expect(insert).not.toHaveBeenCalled();
+      },
+    );
+
+    it("productId 가 있는데 제품이 없으면 NOT_FOUND(resource:'product') 를 돌려주고 LLM 을 호출하지 않는다(resolveRules 는 product 존재를 검사하지 않으므로 이 분기가 유일한 방어선이다)", async () => {
+      const { db } = createRegenerateDbMock({
+        contentRows: [{ ...REGEN_BASE_ROW, productId: 12345 }],
+        channelRows: [{ id: 10, country: "KR", name: "카카오스토어", linkPolicy: "inline" }],
+        ruleRows: [],
+        productRows: [], // products 조회 자체가 빈 결과
+      });
+      const generateJson = vi.fn();
+      const llm = { generateJson };
+
+      const result = await regenerateContentBody(
+        { ...REGEN_DEPS_BASE, db, llm },
+        601,
+        { title: "새 제목1", angle: "새 앵글1", titleCandidates: NEW_TITLE_CANDIDATES },
+      );
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.code).toBe("NOT_FOUND");
+        expect(result.error.details).toEqual({ resource: "product", id: 12345 });
+      }
+      expect(generateJson).not.toHaveBeenCalled();
+    });
   });
 });
 
