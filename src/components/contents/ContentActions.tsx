@@ -31,6 +31,7 @@ export function ContentActions({
   const [registerAsExample, setRegisterAsExample] = useState(false);
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState("");
+  const [deleting, setDeleting] = useState(false);
   const [publishUrl, setPublishUrl] = useState("");
   const [publishResult, setPublishResult] = useState<{ urlCheck: "ok" | "unreachable" | "skipped" | null } | null>(
     null,
@@ -90,6 +91,23 @@ export function ContentActions({
       setRejecting(false);
       setReason("");
       router.refresh();
+    } catch {
+      setState({ pending: false, error: "요청을 보내지 못했습니다." });
+    }
+  }
+
+  // 콘텐츠 삭제(하드 삭제) — 성공하면 행 자체가 없어지므로 다른 run* 과 달리
+  // router.refresh() 가 아니라 목록으로 이동한다(runNewVersion 과 같은 원칙).
+  async function runDelete() {
+    setState({ pending: true, error: null });
+    try {
+      const res = await fetch(`/api/contents/${contentId}`, { method: "DELETE" });
+      const json = await res.json();
+      if (!res.ok) {
+        setState({ pending: false, error: json.error?.message ?? "요청을 처리하지 못했습니다." });
+        return;
+      }
+      router.push("/contents");
     } catch {
       setState({ pending: false, error: "요청을 보내지 못했습니다." });
     }
@@ -243,6 +261,25 @@ export function ContentActions({
           <Button small disabled={state.pending} onClick={() => void run("submit")}>
             검수 요청
           </Button>
+        </>
+      ) : null}
+
+      {status === "draft" ||
+      status === "in_review" ||
+      status === "rejected" ||
+      (status === "approved" && actorRole === "admin") ? (
+        <>
+          <Button variant="danger" small disabled={state.pending} onClick={() => setDeleting((v) => !v)}>
+            삭제
+          </Button>
+          {deleting ? (
+            <div id="deleteBox">
+              <span>정말 삭제할까요? 되돌릴 수 없습니다.</span>
+              <Button variant="danger" small disabled={state.pending} onClick={() => void runDelete()}>
+                삭제 확정
+              </Button>
+            </div>
+          ) : null}
         </>
       ) : null}
 
