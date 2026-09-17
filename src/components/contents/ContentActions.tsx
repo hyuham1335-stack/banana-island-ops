@@ -31,7 +31,6 @@ export function ContentActions({
   const [registerAsExample, setRegisterAsExample] = useState(false);
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState("");
-  const [instruction, setInstruction] = useState("");
   const [publishUrl, setPublishUrl] = useState("");
   const [publishResult, setPublishResult] = useState<{ urlCheck: "ok" | "unreachable" | "skipped" | null } | null>(
     null,
@@ -96,26 +95,11 @@ export function ContentActions({
     }
   }
 
-  async function runRegenerate() {
-    setState({ pending: true, error: null });
-    try {
-      const trimmed = instruction.trim();
-      const res = await fetch(`/api/contents/${contentId}/regenerate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(trimmed ? { instruction: trimmed } : {}),
-      });
-      const json = await res.json();
-      if (!res.ok) {
-        setState({ pending: false, error: json.error?.message ?? "요청을 처리하지 못했습니다." });
-        return;
-      }
-      setState({ pending: false, error: null });
-      setInstruction("");
-      router.push(`/write?contentId=${contentId}`);
-    } catch {
-      setState({ pending: false, error: "요청을 보내지 못했습니다." });
-    }
+  // LLM 을 호출하지 않는다 — 기존 콘텐츠를 그대로 들고 /write 로 이동하면 ContentComposer
+  // 가 initialContent 로 phase: "body" 를 채운다(ContentComposer.tsx:84-96, 이미 구현됨).
+  // 실제 재생성(지시문 입력 + LLM 호출)은 그 화면 안의 GenPanel 쪽 "다시 만들기"에서 한다.
+  function goToRegenerate() {
+    router.push(`/write?contentId=${contentId}`);
   }
 
   async function runPublish() {
@@ -253,17 +237,9 @@ export function ContentActions({
 
       {status === "draft" || status === "rejected" ? (
         <>
-          <div id="regenerateBox">
-            <textarea
-              value={instruction}
-              onChange={(e) => setInstruction(e.target.value)}
-              placeholder="다시 만들 때 지시(선택)"
-              disabled={state.pending}
-            />
-            <Button variant="ghost" small disabled={state.pending} onClick={() => void runRegenerate()}>
-              다시 만들기
-            </Button>
-          </div>
+          <Button variant="ghost" small onClick={goToRegenerate}>
+            다시 만들기
+          </Button>
           <Button small disabled={state.pending} onClick={() => void run("submit")}>
             검수 요청
           </Button>
