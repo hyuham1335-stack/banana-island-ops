@@ -13,6 +13,7 @@ import { toContentDetail, type ContentDetail, type ContentsRow } from "@/lib/con
 import type { ErrorCode } from "@/lib/http";
 import type { LlmClient } from "@/lib/llm/client";
 import { LlmTimeoutError } from "@/lib/llm/client";
+import type { ResolvedRules } from "@/lib/rules-merge";
 import {
   buildBodyInstructionRegenPrompt,
   buildBodyRegenPrompt,
@@ -189,6 +190,198 @@ const PLAN_ALREADY_LINKED_ERROR = {
   details: { from: "plan_already_linked", action: "create" },
 };
 
+interface BodyDraftCtx {
+  contentId: number;
+  channelId: number;
+  productId: number | null;
+  lang: CreateContentInput["lang"];
+  postType: CreateContentInput["postType"];
+  topicMemo: string;
+  targetPersona: string;
+  title: string;
+  angle: string;
+  channel: { name: string; linkPolicy: "inline" | "bio" | "none" };
+  product: { name: string } | null;
+  link: string;
+  rules: ResolvedRules;
+  startedAt: number;
+}
+
+interface BodyDraftResult {
+  finalBody: string;
+  validation: ValidationResult;
+  autoRegenerated: boolean;
+  sentPrompt: string;
+  ruleSnapshot: { ruleIds: number[]; version: string; exampleIds: number[] };
+  templateId: number;
+}
+
+/**
+ * createContentWithBody(FR-005 초안 생성)와 regenerateContentBody 의 title-분기(FR-007,
+ * "다시 만들기"에서 제목을 새로 골라 본문까지 다시 만드는 경우)가 공유하는 본문 생성 로직 —
+ * 템플릿 조회·렌더링 → 브랜드 예시 조회 → 프롬프트 조립 → 1차 LLM 호출(예산) → 하드룰 검증 →
+ * 차단 시 1회 자동 재생성(FR-006) → sentPrompt 스냅샷. DB 저장(INSERT/UPDATE)은 호출부
+ * 책임이다 — 두 호출부의 저장 방식·낙관적 잠금 조건이 다르기 때문이다.
+ */
+async function buildBodyDraft(
+  deps: { db: Db; llm: LlmClient },
+  ctx: BodyDraftCtx,
+): Promise<Result<BodyDraftResult>> {
+  const {
+    contentId,
+    channelId,
+    productId,
+    lang,
+    postType,
+    topicMemo,
+    targetPersona,
+    title,
+    angle,
+    channel,
+    product,
+    link,
+    rules,
+    startedAt,
+  } = ctx;
+
+  // 프롬프트 템플릿 조회 — channelId+lang 우선, 없으면 공통(channelId IS NULL)+lang.
+  const specificTemplateQuery = deps.db
+    .select({ id: promptTemplates.id, body: promptTemplates.body })
+    .from(promptTemplates);
+  specificTemplateQuery.where(
+    and(eq(promptTemplates.channelId, channelId), eq(promptTemplates.lang, lang), eq(promptTemplates.isActive, true)),
+  );
+  specificTemplateQuery.orderBy(desc(promptTemplates.createdAt));
+  specificTemplateQuery.limit(1);
+  let templateRows = await specificTemplateQuery;
+  let template = templateRows[0];
+
+  if (!template) {
+    const commonTemplateQuery = deps.db
+      .select({ id: promptTemplates.id, body: promptTemplates.body })
+      .from(promptTemplates);
+    commonTemplateQuery.where(
+      and(isNull(promptTemplates.channelId), eq(promptTemplates.lang, lang), eq(promptTemplates.isActive, true)),
+    );
+    commonTemplateQuery.orderBy(desc(promptTemplates.createdAt));
+    commonTemplateQuery.limit(1);
+    templateRows = await commonTemplateQuery;
+    template = templateRows[0];
+  }
+
+  if (!template) {
+    console.error(JSON.stringify({ event: "prompt_template_not_found", channelId, lang }));
+    return {
+      ok: false,
+      error: {
+        code: "NOT_FOUND",
+        message: "프롬프트 템플릿을 찾을 수 없습니다.",
+        details: { resource: "prompt_template", id: 0 },
+      },
+    };
+  }
+
+  // 템플릿 렌더링.
+  const renderedTemplate = renderPromptTemplate(template.body, {
+    productName: product?.name ?? "브랜드 소식",
+    channelName: channel.name,
+    targetPersona,
+    link: channel.linkPolicy === "none" ? "" : link,
+  });
+
+  // 브랜드 예시.
+  const examplesQuery = deps.db
+    .select({ id: brandExamples.id, summary: brandExamples.summary })
+    .from(brandExamples);
+  examplesQuery.where(
+    and(eq(brandExamples.channelId, channelId), eq(brandExamples.lang, lang), eq(brandExamples.isActive, true)),
+  );
+  examplesQuery.orderBy(desc(brandExamples.createdAt));
+  examplesQuery.limit(3);
+  const examples = await examplesQuery;
+
+  // 프롬프트 조립.
+  const system = buildBodySystemPrompt(rules, examples.map((e) => ({ summary: e.summary })));
+  const user = buildBodyUserPrompt(renderedTemplate, { productId, channelId, lang, postType, topicMemo, title, angle });
+
+  // 1차 LLM 호출 예산.
+  const remainingForInitial = LLM_BUDGET_MS - (Date.now() - startedAt);
+  if (remainingForInitial <= 0) {
+    return {
+      ok: false,
+      error: { code: "LLM_TIMEOUT", message: "본문 생성이 시간 초과되었습니다.", details: { contentId } },
+    };
+  }
+
+  // 1차 LLM 호출.
+  let draft: { body: string };
+  try {
+    draft = await deps.llm.generateJson(
+      system,
+      user,
+      LlmBodyDraftSchema,
+      Math.min(INITIAL_BODY_TIMEOUT_MS, remainingForInitial),
+      "body",
+    );
+  } catch (err) {
+    if (err instanceof LlmTimeoutError) {
+      return {
+        ok: false,
+        error: { code: "LLM_TIMEOUT", message: "본문 생성이 시간 초과되었습니다.", details: { contentId } },
+      };
+    }
+    return {
+      ok: false,
+      error: { code: "LLM_FAILED", message: "본문 생성에 실패했습니다.", details: { contentId, attempt: 1 } },
+    };
+  }
+
+  // 하드 룰 검증.
+  let validation = validate(draft.body, { must: rules.must, ban: rules.ban });
+  let finalBody = draft.body;
+  let finalUser = user;
+  let autoRegenerated = false;
+
+  // 차단 항목이 있으면 예산이 허락하는 한 1회 재생성.
+  if (validation.blocks.length > 0) {
+    const elapsedMs = Date.now() - startedAt;
+    const remaining = LLM_BUDGET_MS - elapsedMs;
+    if (remaining >= MIN_BODY_REGEN_BUDGET_MS) {
+      const regenTimeoutMs = Math.min(BODY_REGEN_MAX_TIMEOUT_MS, remaining - BODY_REGEN_SAFETY_MARGIN_MS);
+      const regenUser = buildBodyRegenPrompt(finalBody, validation.blocks);
+      try {
+        const regenerated = await deps.llm.generateJson(
+          system,
+          regenUser,
+          LlmBodyDraftSchema,
+          regenTimeoutMs,
+          "body_regenerate",
+        );
+        finalBody = regenerated.body;
+        finalUser = regenUser;
+        autoRegenerated = true;
+        validation = validate(finalBody, { must: rules.must, ban: rules.ban });
+      } catch {
+        // 재생성 실패는 항목 단위로 흡수한다 — 원래 finalBody·validation 유지,
+        // 전체 요청은 계속 성공으로 진행한다.
+      }
+    }
+  }
+
+  // 전송 프롬프트 원문 스냅샷.
+  const sentPrompt = combineSentPrompt(system, finalUser);
+  const ruleSnapshot = {
+    ruleIds: rules.appliedRuleIds,
+    version: rules.version,
+    exampleIds: examples.map((e) => e.id),
+  };
+
+  return {
+    ok: true,
+    data: { finalBody, validation, autoRegenerated, sentPrompt, ruleSnapshot, templateId: template.id },
+  };
+}
+
 export async function createContentWithBody(
   deps: { db: Db; llm: LlmClient; productBaseUrl: string; model: string },
   input: CreateContentInput,
@@ -349,145 +542,36 @@ export async function createContentWithBody(
       contentId,
     });
 
-    // 9~10. 프롬프트 템플릿 조회 — channelId+lang 우선, 없으면 공통(channelId IS NULL)+lang.
-    const specificTemplateQuery = deps.db
-      .select({ id: promptTemplates.id, body: promptTemplates.body })
-      .from(promptTemplates);
-    specificTemplateQuery.where(
-      and(eq(promptTemplates.channelId, input.channelId), eq(promptTemplates.lang, input.lang), eq(promptTemplates.isActive, true)),
-    );
-    specificTemplateQuery.orderBy(desc(promptTemplates.createdAt));
-    specificTemplateQuery.limit(1);
-    let templateRows = await specificTemplateQuery;
-    let template = templateRows[0];
-
-    if (!template) {
-      const commonTemplateQuery = deps.db
-        .select({ id: promptTemplates.id, body: promptTemplates.body })
-        .from(promptTemplates);
-      commonTemplateQuery.where(
-        and(isNull(promptTemplates.channelId), eq(promptTemplates.lang, input.lang), eq(promptTemplates.isActive, true)),
-      );
-      commonTemplateQuery.orderBy(desc(promptTemplates.createdAt));
-      commonTemplateQuery.limit(1);
-      templateRows = await commonTemplateQuery;
-      template = templateRows[0];
-    }
-
-    if (!template) {
-      console.error(
-        JSON.stringify({ event: "prompt_template_not_found", channelId: input.channelId, lang: input.lang }),
-      );
-      return {
-        ok: false,
-        error: {
-          code: "NOT_FOUND",
-          message: "프롬프트 템플릿을 찾을 수 없습니다.",
-          details: { resource: "prompt_template", id: 0 },
-        },
-      };
-    }
-
-    // 11. 템플릿 렌더링.
-    const renderedTemplate = renderPromptTemplate(template.body, {
-      productName: product?.name ?? "브랜드 소식",
-      channelName: channel.name,
+    // 9~18. 템플릿 조회·렌더링 → 브랜드 예시 조회 → 프롬프트 조립 → 1차 LLM 호출(예산) →
+    // 하드룰 검증 → 차단 시 1회 자동 재생성(FR-006) → sentPrompt 스냅샷 — buildBodyDraft 로
+    // 위임한다(regenerateContentBody 의 title-분기와 공유).
+    const draftResult = await buildBodyDraft(deps, {
+      contentId,
+      channelId: input.channelId,
+      productId: input.productId,
+      lang: input.lang,
+      postType: input.postType,
+      topicMemo: input.topicMemo,
       targetPersona: input.targetPersona,
-      link: channel.linkPolicy === "none" ? "" : link,
+      title: input.title,
+      angle: input.angle,
+      channel: { name: channel.name, linkPolicy: channel.linkPolicy },
+      product: product ? { name: product.name } : null,
+      link,
+      rules,
+      startedAt,
     });
-
-    // 12. 브랜드 예시.
-    const examplesQuery = deps.db
-      .select({ id: brandExamples.id, summary: brandExamples.summary })
-      .from(brandExamples);
-    examplesQuery.where(
-      and(eq(brandExamples.channelId, input.channelId), eq(brandExamples.lang, input.lang), eq(brandExamples.isActive, true)),
-    );
-    examplesQuery.orderBy(desc(brandExamples.createdAt));
-    examplesQuery.limit(3);
-    const examples = await examplesQuery;
-
-    // 13. 프롬프트 조립.
-    const system = buildBodySystemPrompt(rules, examples.map((e) => ({ summary: e.summary })));
-    const user = buildBodyUserPrompt(renderedTemplate, input);
-
-    // 14. 1차 LLM 호출 예산.
-    const remainingForInitial = LLM_BUDGET_MS - (Date.now() - startedAt);
-    if (remainingForInitial <= 0) {
-      return {
-        ok: false,
-        error: { code: "LLM_TIMEOUT", message: "본문 생성이 시간 초과되었습니다.", details: { contentId } },
-      };
-    }
-
-    // 15. 1차 LLM 호출.
-    let draft: { body: string };
-    try {
-      draft = await deps.llm.generateJson(
-        system,
-        user,
-        LlmBodyDraftSchema,
-        Math.min(INITIAL_BODY_TIMEOUT_MS, remainingForInitial),
-        "body",
-      );
-    } catch (err) {
-      if (err instanceof LlmTimeoutError) {
-        return {
-          ok: false,
-          error: { code: "LLM_TIMEOUT", message: "본문 생성이 시간 초과되었습니다.", details: { contentId } },
-        };
-      }
-      return {
-        ok: false,
-        error: { code: "LLM_FAILED", message: "본문 생성에 실패했습니다.", details: { contentId, attempt: 1 } },
-      };
-    }
-
-    // 16. 하드 룰 검증.
-    let validation = validate(draft.body, { must: rules.must, ban: rules.ban });
-    let finalBody = draft.body;
-    let finalUser = user;
-    let autoRegenerated = false;
-
-    // 17. 차단 항목이 있으면 예산이 허락하는 한 1회 재생성.
-    if (validation.blocks.length > 0) {
-      const elapsedMs = Date.now() - startedAt;
-      const remaining = LLM_BUDGET_MS - elapsedMs;
-      if (remaining >= MIN_BODY_REGEN_BUDGET_MS) {
-        const regenTimeoutMs = Math.min(BODY_REGEN_MAX_TIMEOUT_MS, remaining - BODY_REGEN_SAFETY_MARGIN_MS);
-        const regenUser = buildBodyRegenPrompt(finalBody, validation.blocks);
-        try {
-          const regenerated = await deps.llm.generateJson(
-            system,
-            regenUser,
-            LlmBodyDraftSchema,
-            regenTimeoutMs,
-            "body_regenerate",
-          );
-          finalBody = regenerated.body;
-          finalUser = regenUser;
-          autoRegenerated = true;
-          validation = validate(finalBody, { must: rules.must, ban: rules.ban });
-        } catch {
-          // 재생성 실패는 항목 단위로 흡수한다 — 원래 finalBody·validation 유지,
-          // 전체 요청은 계속 성공으로 진행한다.
-        }
-      }
-    }
-
-    // 18. 전송 프롬프트 원문 스냅샷.
-    const sentPrompt = combineSentPrompt(system, finalUser);
+    if (!draftResult.ok) return draftResult;
+    const { finalBody, validation, autoRegenerated, sentPrompt, ruleSnapshot, templateId } = draftResult.data;
 
     // 19. 최종 UPDATE — 동시 재시도 경합의 유일한 직렬화 지점.
-    const exampleIds = examples.map((e) => e.id);
-    const ruleSnapshot = { ruleIds: rules.appliedRuleIds, version: rules.version, exampleIds };
     const regenCount = autoRegenerated ? 1 : 0;
 
     const finalUpdatedRows = await deps.db
       .update(contents)
       .set({
         body: finalBody,
-        templateId: template.id,
+        templateId,
         sentPrompt,
         model: deps.model,
         ruleSnapshot,
@@ -549,7 +633,7 @@ export async function createContentWithBody(
       sourceContentId: resultSourceContentId,
       productId: input.productId,
       channelId: input.channelId,
-      templateId: template.id,
+      templateId,
       authorId: null,
       reviewerId: null,
       publisherId: null,
@@ -659,6 +743,149 @@ export async function regenerateContentBody(
       return { ok: false, error: rulesResult.error };
     }
     const rules = rulesResult.data;
+
+    // title-분기(다시 만들기에서 제목을 새로 골라 본문까지 다시 만드는 경우) — 지시문 경로
+    // 대신 createContentWithBody 의 초안 생성과 같은 제목·앵글 기반 프롬프트로 본문을 새로
+    // 만든다. RegenerateInputSchema 의 refine 이 title·angle·titleCandidates 를 항상 함께
+    // 오도록 강제하므로 여기서는 title 유무만 본다.
+    if (input.title !== undefined && input.angle !== undefined && input.titleCandidates !== undefined) {
+      const channelQuery = deps.db
+        .select({ name: salesChannels.name, linkPolicy: salesChannels.linkPolicy })
+        .from(salesChannels);
+      channelQuery.where(eq(salesChannels.id, row.channelId));
+      const channelRows = await channelQuery;
+      const channel = channelRows[0];
+      if (!channel) {
+        return {
+          ok: false,
+          error: {
+            code: "NOT_FOUND",
+            message: "채널을 찾을 수 없습니다.",
+            details: { resource: "channel", id: row.channelId },
+          },
+        };
+      }
+
+      let product: { name: string } | null = null;
+      if (row.productId !== null) {
+        const productQuery = deps.db.select({ name: products.name }).from(products);
+        productQuery.where(eq(products.id, row.productId));
+        const productRows = await productQuery;
+        const found = productRows[0];
+        if (!found) {
+          return {
+            ok: false,
+            error: {
+              code: "NOT_FOUND",
+              message: "제품을 찾을 수 없습니다.",
+              details: { resource: "product", id: row.productId },
+            },
+          };
+        }
+        product = found;
+      }
+
+      // resolveContentLink 를 UPDATE 보다 먼저 호출하는 이유는 아래 지시문 경로와 같다
+      // (832행 주석 참고).
+      const link = await resolveContentLink(deps, row);
+
+      const draftResult = await buildBodyDraft(deps, {
+        contentId,
+        channelId: row.channelId,
+        productId: row.productId,
+        lang: row.lang,
+        postType: row.postType,
+        // 콘텐츠 행에는 topicMemo 가 저장되지 않는다(계획의 topic_memo 와 별개) — 다시
+        // 만들기 화면에서 이 값을 다시 물어보지 않으므로 빈 문자열로 둔다.
+        topicMemo: "",
+        targetPersona: row.targetPersona ?? "",
+        title: input.title,
+        angle: input.angle,
+        channel,
+        product,
+        link,
+        rules,
+        startedAt,
+      });
+      if (!draftResult.ok) return draftResult;
+      const { finalBody, validation, autoRegenerated, sentPrompt, ruleSnapshot, templateId } = draftResult.data;
+
+      const lockedUpdateRows = await deps.db
+        .update(contents)
+        .set({
+          title: input.title,
+          titleCandidates: input.titleCandidates,
+          templateId,
+          body: finalBody,
+          sentPrompt,
+          model: deps.model,
+          ruleSnapshot,
+          detectedTerms: validation,
+          regenCount: sql`${contents.regenCount} + 1`,
+          updatedAt: sql`now()`,
+        })
+        .where(
+          and(
+            eq(contents.id, contentId),
+            eq(contents.status, row.status),
+            eq(contents.regenCount, row.regenCount),
+            bodyUnchangedGuard(row.body),
+          ),
+        )
+        .returning({ updatedAt: contents.updatedAt, regenCount: contents.regenCount });
+
+      const updated = lockedUpdateRows[0];
+      if (!updated) {
+        return {
+          ok: false,
+          error: {
+            code: "INVALID_TRANSITION",
+            message: "다른 요청이 먼저 이 콘텐츠를 변경했습니다.",
+            details: { from: row.status },
+          },
+        };
+      }
+
+      const historyInsertRows = await deps.db
+        .insert(contentHistory)
+        .values({
+          contentId,
+          versionNo: sql<number>`(select coalesce(max(version_no), 0) + 1 from content_history where content_id = ${contentId})`,
+          reason: "regenerate",
+          title: row.title,
+          body: row.body,
+          sentPrompt: row.sentPrompt,
+          detectedTerms: row.detectedTerms,
+          changedBy: null,
+        })
+        .returning({ versionNo: contentHistory.versionNo });
+      const historyCount = historyInsertRows[0]?.versionNo ?? 0;
+
+      const updatedRow: ContentsRow = {
+        ...row,
+        title: input.title,
+        titleCandidates: input.titleCandidates,
+        templateId,
+        body: finalBody,
+        sentPrompt,
+        model: deps.model,
+        ruleSnapshot,
+        detectedTerms: validation,
+        regenCount: updated.regenCount,
+        updatedAt: updated.updatedAt,
+      };
+
+      const data = toContentDetail(updatedRow, {
+        validation,
+        link,
+        isExample: false,
+        historyCount,
+        autoRegenerated,
+        channelFormat: null,
+      });
+
+      return { ok: true, data };
+    }
 
     // 활성 브랜드 예시 최대 3개 — createContentWithBody 와 같은 조건.
     const examplesQuery = deps.db

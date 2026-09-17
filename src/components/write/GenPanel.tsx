@@ -251,15 +251,12 @@ export function GenPanel({
                     {copied ? "복사됨" : "링크 복사"}
                   </Button>
                 ) : null}
-                {gen.items.length === 0 ? (
-                  <Link href={`/contents/${gen.content.id}`} className="btn ghost small">
-                    콘텐츠 상세로
-                  </Link>
-                ) : (
-                  <Button variant="ghost" small onClick={onBackToTitles}>
-                    제목으로 돌아가기
-                  </Button>
-                )}
+                <Button variant="ghost" small onClick={onBackToTitles}>
+                  제목으로 돌아가기
+                </Button>
+                <Link href={`/contents/${gen.content.id}`} className="btn ghost small">
+                  콘텐츠 상세로
+                </Link>
               </div>
             </div>
           </>
