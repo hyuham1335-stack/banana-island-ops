@@ -834,3 +834,72 @@ export async function createNewVersion(
     return { ok: false, error: { code: "INTERNAL", message: "새 버전 생성 중 오류가 발생했습니다." } };
   }
 }
+
+/**
+ * 콘텐츠 삭제(하드 삭제). `draft`·`in_review`·`rejected` 는 누구나, `approved` 는 admin만
+ * (editor 는 403), `published` 는 409 로 막는다 — 상태별로 필요 역할이 달라 `TRANSITIONS`
+ * 표(액션당 고정 역할)에 넣지 않고 별도 함수로 둔다(approveContent·createNewVersion 과 같은
+ * 패턴). ADR-002: HTTP 드라이버는 다중 문 트랜잭션이 없어 자식(content_history 삭제 ·
+ * brand_examples.content_id null 처리) → 되돌릴 수 없는 부모(contents 삭제) 순서로 실행한다
+ * — 중간에 실패해도 재시도가 멱등하게 수렴한다.
+ */
+export async function deleteContent(
+  deps: { db: Db },
+  contentId: number,
+  actor: Actor,
+): Promise<Result<{ id: number }>> {
+  try {
+    const selectQuery = deps.db.select().from(contents);
+    selectQuery.where(eq(contents.id, contentId));
+    const rows = await selectQuery;
+    const row = rows[0];
+
+    if (!row) {
+      return {
+        ok: false,
+        error: {
+          code: "NOT_FOUND",
+          message: "콘텐츠를 찾을 수 없습니다.",
+          details: { resource: "content", id: contentId },
+        },
+      };
+    }
+
+    if (row.status === "published") {
+      return {
+        ok: false,
+        error: {
+          code: "INVALID_TRANSITION",
+          message: "발행 완료된 콘텐츠는 삭제할 수 없습니다.",
+          details: { from: row.status, action: "delete" },
+        },
+      };
+    }
+
+    if (row.status === "approved" && actor.role !== "admin") {
+      return {
+        ok: false,
+        error: {
+          code: "FORBIDDEN_ROLE",
+          message: "승인된 콘텐츠는 대표만 삭제할 수 있습니다.",
+          details: { required: "admin" },
+        },
+      };
+    }
+
+    await deps.db.delete(contentHistory).where(eq(contentHistory.contentId, contentId));
+    await deps.db.update(brandExamples).set({ contentId: null }).where(eq(brandExamples.contentId, contentId));
+    await deps.db.delete(contents).where(eq(contents.id, contentId));
+
+    return { ok: true, data: { id: contentId } };
+  } catch (err) {
+    console.error(
+      JSON.stringify({
+        event: "content_delete_failed",
+        contentId,
+        message: err instanceof Error ? err.message : String(err),
+      }),
+    );
+    return { ok: false, error: { code: "INTERNAL", message: "콘텐츠 삭제 중 오류가 발생했습니다." } };
+  }
+}

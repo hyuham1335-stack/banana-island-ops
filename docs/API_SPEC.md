@@ -45,6 +45,7 @@
 | POST | `/api/contents/{id}/reject` | admin | 반려 (사유 필수) | 10 |
 | POST | `/api/contents/{id}/publish` | 누구나 | 발행 완료 (URL 선택, HEAD 확인) | 15 |
 | POST | `/api/contents/{id}/new-version` | 누구나 | 발행된 글의 새 버전 초안 | 10 |
+| DELETE | `/api/contents/{id}` | 상태별(본문 참고) | 콘텐츠 삭제(하드 삭제) | 10 |
 | GET | `/api/fx` | 누구나 | 날짜 기준 환율 (신선도 포함) | 10 |
 
 ### Should
@@ -222,6 +223,15 @@ ChannelFormat {
 ### POST `/api/contents/{id}/new-version`
 
 → 201 `{ data: ContentDetail }` — 새 행(`sourceContentId = id`, `status='draft'`, 제목에 ` (v2)`), 계획 연결은 새 행으로 이전. `published` 외 409.
+
+### DELETE `/api/contents/{id}`
+
+본문 없음 → 200 `{ data: { id: number } }`. `draft`·`in_review`·`rejected` 는 누구나,
+`approved` 는 admin만(editor 는 403 `FORBIDDEN_ROLE`), `published` 는 409
+`INVALID_TRANSITION`. 없으면 404. 하드 삭제 — `contents` 행과 연결된
+`content_history` 행을 지우고 `brand_examples.content_id` 는 null 처리한다(다중 문
+트랜잭션이 없어(ADR-002) 자식 → 부모 순서로 실행, 재시도해도 안전하도록 부모 삭제를
+마지막에 둔다).
 
 ### GET `/api/fx?date=YYYY-MM-DD`
 

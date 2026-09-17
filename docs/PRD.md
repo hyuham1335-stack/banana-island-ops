@@ -238,6 +238,10 @@ stateDiagram-v2
     approved --> published : 발행 완료 (URL 선택)
     published --> [*]
     published --> draft : 새 버전 (새 콘텐츠 행)
+    draft --> [*] : delete
+    in_review --> [*] : delete
+    rejected --> [*] : delete
+    approved --> [*] : delete (admin)
 ```
 
 계획의 파생 상태: 연결 콘텐츠 없음 → **예정** · `draft`/`rejected` → **생성중** · `in_review` → **검수 대기** · `approved` → **승인** · `published` → **발행 완료** · `on_hold=true` → **보류**.
