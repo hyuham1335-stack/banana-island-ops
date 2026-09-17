@@ -48,6 +48,7 @@ vi.mock("@/services/rules", async (importOriginal) => {
 });
 
 import { and, eq, isNull } from "drizzle-orm";
+import type { Actor } from "@/lib/auth";
 import type { Db } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import type { ContentsRow } from "@/lib/content-detail";
@@ -58,6 +59,7 @@ import {
   approveContent,
   bodyUnchangedGuard,
   createNewVersion,
+  deleteContent,
   getContentDetail,
   listContents,
   resolveContentLink,
@@ -1689,5 +1691,156 @@ describe("createNewVersion", () => {
     // 3단계(resolveRules) 실패 시점까지 DB 에 아무 쓰기도 없었다 — 원본 UPDATE 도, 새 행 INSERT 도 없다.
     expect(update).not.toHaveBeenCalled();
     expect(insert).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// deleteContent — 콘텐츠 삭제(하드 삭제). draft·in_review·rejected 는 누구나,
+// approved 는 admin만, published 는 삭제 불가(ADR-002: 다중 문 트랜잭션이 없어
+// content_history delete → brand_examples update → contents delete 순서로 실행하고,
+// 되돌릴 수 없는 contents delete 를 마지막에 둔다).
+// ---------------------------------------------------------------------------
+
+function createDeleteDbMock(opts: { contentRows: ContentsRow[] }) {
+  const callOrder: string[] = [];
+  const deleteCalls: { table: unknown; where: unknown }[] = [];
+  const updateCalls: { table: unknown; set: unknown; where: unknown }[] = [];
+
+  const select = vi.fn(() => ({
+    from: vi.fn((table: unknown) => {
+      if (table === schema.contents) return makeChainNode(opts.contentRows);
+      throw new Error(`unexpected select().from() table in test mock: ${String(table)}`);
+    }),
+  }));
+
+  const del = vi.fn((table: unknown) => ({
+    where: vi.fn((whereArg: unknown) => {
+      deleteCalls.push({ table, where: whereArg });
+      callOrder.push(table === schema.contentHistory ? "delete:contentHistory" : "delete:contents");
+      return makeChainNode(undefined);
+    }),
+  }));
+
+  const update = vi.fn((table: unknown) => ({
+    set: vi.fn((vals: unknown) => ({
+      where: vi.fn((whereArg: unknown) => {
+        updateCalls.push({ table, set: vals, where: whereArg });
+        callOrder.push("update:brandExamples");
+        return makeChainNode(undefined);
+      }),
+    })),
+  }));
+
+  return {
+    db: { select, delete: del, update } as unknown as Db,
+    select,
+    delete: del,
+    update,
+    callOrder,
+    deleteCalls,
+    updateCalls,
+  };
+}
+
+const EDITOR: Actor = { role: "editor" };
+const ADMIN: Actor = { role: "admin" };
+
+describe("deleteContent", () => {
+  it("NOT_FOUND — 없는 id", async () => {
+    const { db } = createDeleteDbMock({ contentRows: [] });
+
+    const result = await deleteContent({ db }, 999, EDITOR);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe("NOT_FOUND");
+      expect(result.error.details).toEqual({ resource: "content", id: 999 });
+    }
+  });
+
+  it.each(["draft", "in_review", "rejected"] as const)(
+    "status='%s' 는 editor 도 삭제 가능 — content_history 삭제 → brand_examples null 처리 → contents 삭제 순서로 실행한다",
+    async (status) => {
+      const row = contentRow({ id: 5, status });
+      const { db, callOrder, deleteCalls, updateCalls } = createDeleteDbMock({ contentRows: [row] });
+
+      const result = await deleteContent({ db }, 5, EDITOR);
+
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.data).toEqual({ id: 5 });
+      expect(callOrder).toEqual(["delete:contentHistory", "update:brandExamples", "delete:contents"]);
+      expect(deleteCalls[0].table).toBe(schema.contentHistory);
+      expect(updateCalls[0].table).toBe(schema.brandExamples);
+      expect(updateCalls[0].set).toEqual({ contentId: null });
+      expect(deleteCalls[1].table).toBe(schema.contents);
+    },
+  );
+
+  it.each(["draft", "in_review", "rejected"] as const)("status='%s' 는 admin 도 삭제 가능", async (status) => {
+    const row = contentRow({ id: 5, status });
+    const { db } = createDeleteDbMock({ contentRows: [row] });
+
+    const result = await deleteContent({ db }, 5, ADMIN);
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("status='approved' 인 콘텐츠를 editor 가 삭제하면 FORBIDDEN_ROLE — 자식·본행 어느 것도 지우지 않는다", async () => {
+    const row = contentRow({ id: 5, status: "approved" });
+    const { db, delete: del, update } = createDeleteDbMock({ contentRows: [row] });
+
+    const result = await deleteContent({ db }, 5, EDITOR);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe("FORBIDDEN_ROLE");
+      expect(result.error.details).toEqual({ required: "admin" });
+    }
+    expect(del).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("status='approved' 인 콘텐츠는 admin 이 삭제할 수 있다", async () => {
+    const row = contentRow({ id: 5, status: "approved" });
+    const { db, callOrder } = createDeleteDbMock({ contentRows: [row] });
+
+    const result = await deleteContent({ db }, 5, ADMIN);
+
+    expect(result.ok).toBe(true);
+    expect(callOrder).toEqual(["delete:contentHistory", "update:brandExamples", "delete:contents"]);
+  });
+
+  it.each([EDITOR, ADMIN])(
+    "status='published' 는 역할과 무관하게 INVALID_TRANSITION — 자식·본행 어느 것도 지우지 않는다",
+    async (actor) => {
+      const row = contentRow({ id: 5, status: "published" });
+      const { db, delete: del, update } = createDeleteDbMock({ contentRows: [row] });
+
+      const result = await deleteContent({ db }, 5, actor);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.code).toBe("INVALID_TRANSITION");
+        expect(result.error.details).toEqual({ from: "published", action: "delete" });
+      }
+      expect(del).not.toHaveBeenCalled();
+      expect(update).not.toHaveBeenCalled();
+    },
+  );
+
+  it("DB 조회가 예외를 던지면 INTERNAL 을 반환한다(details 없음)", async () => {
+    const db = {
+      select: vi.fn(() => {
+        throw new Error("connection lost");
+      }),
+    } as unknown as Db;
+
+    const result = await deleteContent({ db }, 5, EDITOR);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe("INTERNAL");
+      expect(result.error.details).toBeUndefined();
+    }
   });
 });

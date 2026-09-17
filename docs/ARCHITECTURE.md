@@ -194,7 +194,12 @@ stateDiagram-v2
     rejected --> draft : edit · regenerate
     approved --> published : publish
     published --> [*]
+    draft --> [*] : delete
+    in_review --> [*] : delete
+    rejected --> [*] : delete
+    approved --> [*] : delete (admin)
     note right of published : new-version → 새 draft 행 (source_content_id)
+    note left of draft : delete = 하드 삭제, published 는 불가
 ```
 
 ### ③ 환율과 원가 (Should)

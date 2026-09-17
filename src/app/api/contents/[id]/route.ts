@@ -1,14 +1,17 @@
+import { getActor } from "@/lib/auth";
 import { getDb } from "@/lib/db/client";
 import { getEnv } from "@/lib/env";
 import { fail, ok } from "@/lib/http";
 import { EditContentInputSchema } from "@/lib/schemas";
 import { editContent } from "@/services/content-generation";
-import { getContentDetail } from "@/services/content-workflow";
+import { deleteContent, getContentDetail } from "@/services/content-workflow";
 
 /**
  * GET /api/contents/{id} — FR-009 계약(run 20260915-1754-5568). 인가 없음(누구나).
  * PATCH /api/contents/{id} — FR-008 계약(_workspace/contract_fr-008-direct-edit.md). 인가
  * 없음(누구나) — API_SPEC.md 표에 명시.
+ * DELETE /api/contents/{id} — 콘텐츠 삭제(하드 삭제). draft·in_review·rejected 는 누구나,
+ * approved 는 admin만, published 는 삭제 불가 — 인가는 deleteContent() 안에서 검사한다.
  */
 export const maxDuration = 10;
 
@@ -51,6 +54,23 @@ export async function PATCH(
 
   const env = getEnv();
   const result = await editContent({ db: getDb(), productBaseUrl: env.PRODUCT_BASE_URL }, id, parsed.data);
+
+  if (result.ok) return ok(result.data);
+  return fail(result.error.code, result.error.message, result.error.details);
+}
+
+export async function DELETE(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> },
+): Promise<Response> {
+  const { id: idParam } = await params;
+  const id = Number(idParam);
+
+  if (!Number.isInteger(id) || id <= 0) {
+    return fail("VALIDATION_ERROR", "id 형식이 올바르지 않습니다.");
+  }
+
+  const result = await deleteContent({ db: getDb() }, id, getActor(request));
 
   if (result.ok) return ok(result.data);
   return fail(result.error.code, result.error.message, result.error.details);

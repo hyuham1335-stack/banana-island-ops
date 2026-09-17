@@ -17,15 +17,21 @@ vi.mock("@/lib/env", () => ({
 
 vi.mock("@/services/content-workflow", () => ({
   getContentDetail: vi.fn(),
+  deleteContent: vi.fn(),
 }));
 
 vi.mock("@/services/content-generation", () => ({
   editContent: vi.fn(),
 }));
 
-import { getContentDetail } from "@/services/content-workflow";
+vi.mock("@/lib/auth", () => ({
+  getActor: vi.fn(() => ({ role: "editor" })),
+}));
+
+import { getContentDetail, deleteContent } from "@/services/content-workflow";
 import { editContent } from "@/services/content-generation";
-import { GET, PATCH, maxDuration } from "./route";
+import { getActor } from "@/lib/auth";
+import { GET, PATCH, DELETE, maxDuration } from "./route";
 
 const JSON_UTF8 = "application/json; charset=utf-8";
 
@@ -272,6 +278,118 @@ describe("PATCH /api/contents/{id}", () => {
     expect(res.status).toBe(500);
     expect(await res.json()).toEqual({
       error: { code: "INTERNAL", message: "콘텐츠 수정 중 오류가 발생했습니다." },
+    });
+  });
+});
+
+// 계약: DELETE /api/contents/{id} — 콘텐츠 삭제(하드 삭제). deleteContent() 를 모킹해
+// id 파싱·getActor 전달·Result → 상태 코드 매핑만 검증한다(위 GET/PATCH 스위트와 같은 원칙).
+
+function deleteReqFor(id: string): { request: Request; ctx: { params: Promise<{ id: string }> } } {
+  return {
+    request: new Request(`http://localhost/api/contents/${id}`, { method: "DELETE" }),
+    ctx: { params: Promise.resolve({ id }) },
+  };
+}
+
+describe("DELETE /api/contents/{id}", () => {
+  it("id 가 정수 형식이 아니면 400 VALIDATION_ERROR 를 돌려주고 deleteContent 를 호출하지 않는다", async () => {
+    const { request, ctx } = deleteReqFor("abc");
+    const res = await DELETE(request, ctx);
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error.code).toBe("VALIDATION_ERROR");
+    expect(deleteContent).not.toHaveBeenCalled();
+  });
+
+  it("id 가 0 이하이면 400 VALIDATION_ERROR 를 돌려준다", async () => {
+    const { request, ctx } = deleteReqFor("0");
+    const res = await DELETE(request, ctx);
+
+    expect(res.status).toBe(400);
+    expect(deleteContent).not.toHaveBeenCalled();
+  });
+
+  it("성공하면 deleteContent(deps, id, actor) 를 호출하고 Result.ok 를 200 + { data } 로 돌려준다", async () => {
+    vi.mocked(getActor).mockReturnValue({ role: "admin" });
+    vi.mocked(deleteContent).mockResolvedValue({ ok: true, data: { id: 501 } });
+
+    const { request, ctx } = deleteReqFor("501");
+    const res = await DELETE(request, ctx);
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe(JSON_UTF8);
+    expect(await res.json()).toEqual({ data: { id: 501 } });
+    expect(deleteContent).toHaveBeenCalledTimes(1);
+    expect(deleteContent).toHaveBeenCalledWith(expect.anything(), 501, { role: "admin" });
+  });
+
+  it("Result.err(NOT_FOUND) 면 404 + { error } 봉투를 돌려준다", async () => {
+    vi.mocked(deleteContent).mockResolvedValue({
+      ok: false,
+      error: { code: "NOT_FOUND", message: "콘텐츠를 찾을 수 없습니다.", details: { resource: "content", id: 999 } },
+    });
+
+    const { request, ctx } = deleteReqFor("999");
+    const res = await DELETE(request, ctx);
+
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({
+      error: { code: "NOT_FOUND", message: "콘텐츠를 찾을 수 없습니다.", details: { resource: "content", id: 999 } },
+    });
+  });
+
+  it("Result.err(FORBIDDEN_ROLE) 면 403 + { error } 봉투를 돌려준다(승인된 콘텐츠를 editor 가 삭제 시도)", async () => {
+    vi.mocked(deleteContent).mockResolvedValue({
+      ok: false,
+      error: { code: "FORBIDDEN_ROLE", message: "승인된 콘텐츠는 대표만 삭제할 수 있습니다.", details: { required: "admin" } },
+    });
+
+    const { request, ctx } = deleteReqFor("501");
+    const res = await DELETE(request, ctx);
+
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({
+      error: { code: "FORBIDDEN_ROLE", message: "승인된 콘텐츠는 대표만 삭제할 수 있습니다.", details: { required: "admin" } },
+    });
+  });
+
+  it("Result.err(INVALID_TRANSITION) 면 409 + { error } 봉투를 돌려준다(발행 완료된 콘텐츠)", async () => {
+    vi.mocked(deleteContent).mockResolvedValue({
+      ok: false,
+      error: {
+        code: "INVALID_TRANSITION",
+        message: "발행 완료된 콘텐츠는 삭제할 수 없습니다.",
+        details: { from: "published", action: "delete" },
+      },
+    });
+
+    const { request, ctx } = deleteReqFor("501");
+    const res = await DELETE(request, ctx);
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      error: {
+        code: "INVALID_TRANSITION",
+        message: "발행 완료된 콘텐츠는 삭제할 수 없습니다.",
+        details: { from: "published", action: "delete" },
+      },
+    });
+  });
+
+  it("Result.err(INTERNAL) 면 500 + { error } 봉투를 돌려준다", async () => {
+    vi.mocked(deleteContent).mockResolvedValue({
+      ok: false,
+      error: { code: "INTERNAL", message: "콘텐츠 삭제 중 오류가 발생했습니다." },
+    });
+
+    const { request, ctx } = deleteReqFor("501");
+    const res = await DELETE(request, ctx);
+
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({
+      error: { code: "INTERNAL", message: "콘텐츠 삭제 중 오류가 발생했습니다." },
     });
   });
 });
