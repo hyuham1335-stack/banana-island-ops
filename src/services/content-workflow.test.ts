@@ -1299,10 +1299,9 @@ describe("transition — publish", () => {
 
   it.each([
     ["ok", "https://blog.naver.com/post/2"],
-    ["unreachable", "https://blog.naver.com/post/3"],
     ["skipped", "https://blog.naver.com/post/4"],
   ] as const)(
-    "urlChecker.check 가 '%s' 를 반환하면 urlCheck 컬럼에 그대로 저장된다",
+    "urlChecker.check 가 '%s' 를 반환하면 urlCheck 컬럼에 그대로 저장되고 발행이 성공한다",
     async (checkResult, publishedUrl) => {
       const row = contentRow({ status: "approved" });
       const checker = urlCheckerMock(checkResult);
@@ -1327,6 +1326,74 @@ describe("transition — publish", () => {
       expect(updateSetCalls[0]).toMatchObject({ urlCheck: checkResult });
     },
   );
+
+  it("urlChecker.check 가 'unreachable' 을 반환하면 422 URL_UNREACHABLE 로 발행을 차단하고 DB 를 건드리지 않는다", async () => {
+    const row = contentRow({ status: "approved" });
+    const checker = urlCheckerMock("unreachable");
+    const { db, select, update } = createDbMock({ contentRows: [row] });
+
+    const result = await transition(
+      { db, ...DEPS, urlChecker: checker },
+      1,
+      "publish",
+      { role: "editor" },
+      { publishedUrl: "https://blog.naver.com/post/dead" },
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe("URL_UNREACHABLE");
+      expect(result.error.details).toEqual({ publishedUrl: "https://blog.naver.com/post/dead" });
+    }
+    expect(checker.check).toHaveBeenCalledWith("https://blog.naver.com/post/dead");
+    // update() 자체가 전혀 호출되지 않는다 — status='approved' 그대로 DB 에 남는다.
+    expect(update).not.toHaveBeenCalled();
+    // select() 는 최초 콘텐츠 조회 1회뿐이다 — resolveActorUserId(select users)·
+    // resolveContentLink(select salesChannels) 모두 이 차단 이후로는 실행되지 않는다.
+    expect(select).toHaveBeenCalledTimes(1);
+  });
+
+  it("unreachable 로 막힌 뒤에도 콘텐츠는 approved 로 남아 재시도하면 정상 발행된다", async () => {
+    const row = contentRow({ status: "approved" });
+    const blockedChecker = urlCheckerMock("unreachable");
+    const blockedMock = createDbMock({ contentRows: [row] });
+
+    const blockedResult = await transition(
+      { db: blockedMock.db, ...DEPS, urlChecker: blockedChecker },
+      1,
+      "publish",
+      { role: "editor" },
+      { publishedUrl: "https://blog.naver.com/post/dead" },
+    );
+    expect(blockedResult.ok).toBe(false);
+
+    // 차단은 DB 를 건드리지 않으므로 같은 행(status='approved')에 대해 재시도하면 통과한다.
+    const retryChecker = urlCheckerMock("ok");
+    const retryMock = createDbMock({
+      contentRows: [row],
+      userRows: [{ id: 1 }],
+      updateReturningResult: [
+        {
+          updatedAt: new Date(),
+          publishedUrl: "https://blog.naver.com/post/fixed",
+          urlCheck: "ok",
+          publishedAt: new Date(),
+          publisherId: 1,
+        },
+      ],
+    });
+
+    const retryResult = await transition(
+      { db: retryMock.db, ...DEPS, urlChecker: retryChecker },
+      1,
+      "publish",
+      { role: "editor" },
+      { publishedUrl: "https://blog.naver.com/post/fixed" },
+    );
+
+    expect(retryResult.ok).toBe(true);
+    if (retryResult.ok) expect(retryResult.data.status).toBe("published");
+  });
 
   it("publishedUrl 없이 호출해도 발행에 성공한다 — urlChecker.check 가 null 로 호출되고 urlCheck='skipped' 가 저장된다", async () => {
     const row = contentRow({ status: "approved" });

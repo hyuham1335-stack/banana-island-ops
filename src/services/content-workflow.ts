@@ -388,6 +388,20 @@ export async function transition(
     if (action === "publish") {
       const checker = deps.urlChecker ?? createUrlChecker();
       urlCheck = await checker.check(extra?.publishedUrl ?? null);
+
+      // ADR-009(2026-09-17 개정): URL 을 넣었는데 unreachable 이면 발행 전이 자체를 막는다.
+      // 아직 아무 UPDATE 도 하지 않았으므로 행은 조회 시점 상태(approved) 그대로 남고,
+      // 담당자는 URL 을 고치거나 지운 뒤 재시도할 수 있다. skipped(URL 미입력)는 막지 않는다.
+      if (urlCheck === "unreachable") {
+        return {
+          ok: false,
+          error: {
+            code: "URL_UNREACHABLE",
+            message: "URL을 확인할 수 없어 발행을 완료하지 못했습니다.",
+            details: { publishedUrl: extra?.publishedUrl ?? null },
+          },
+        };
+      }
     }
 
     let reviewerId: number | null = null;

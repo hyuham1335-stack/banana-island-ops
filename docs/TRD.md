@@ -55,7 +55,7 @@
 | FR-014 | `createNewVersion(contentId)` — `transition()` 은 "조회한 행을 그대로 UPDATE" 라는 불변식이라 "원본은 안 바꾸고 새 행을 만든다"는 이 요구와 모양이 달라 `TRANSITIONS` 표 밖의 별도 함수로 둔다(`approveContent()`·`statusAfterEdit` 와 같은 선례). `published` 원본의 `publish_plan_id` 를 낙관적 잠금으로 비우고 그 값으로 새 `draft` 행(`source_content_id`=원본 id, 본문·전송 프롬프트·규칙 스냅샷 복사, 제목에 " (v2)")을 INSERT. 원본은 `published` 그대로 잠긴 채 남는다 | `services/content-workflow.ts` |
 | FR-010 예시 등록 | `approve` 에 `registerAsExample=true` 면 `warns.length === 0` 일 때만 `brand_examples` INSERT(`summary` = 본문 앞 800자, `reason='admin_approval'`, `evidence=null`). 경고가 있으면 승인은 하되 응답에 `exampleRegistered:false, reason` | 같은 파일 |
 | FR-012 | `formatForChannel(content, channel)` 순수 함수 — 인스타: 해시태그 세트 + 「프로필 링크」, 아마존: 그대로, 블로그류: 본문에 UTM 없으면 끝에 추가 | `lib/channel-format.ts` |
-| FR-013 URL 확인 | `checkUrl(url)` — `fetch(url, {method:'HEAD', signal: 5s})` → `ok | unreachable`. URL 없으면 `skipped`. 결과는 `contents.url_check` 에, 실패가 전이를 막지 않는다. 발행 자체는 수동 (ADR-009) | `lib/url-check.ts` |
+| FR-013 URL 확인 | `checkUrl(url)` — `fetch(url, {method:'HEAD', signal: 5s})` → `ok | unreachable`. URL 없으면 `skipped`. `unreachable` 이면 전이를 막는다(422 `URL_UNREACHABLE`) — `contents.url_check` 는 기록하지 않는다(전이 자체가 실패). `ok`/`skipped` 는 `contents.url_check` 에 저장하고 전이한다. 발행 자체는 수동 (ADR-009) | `lib/url-check.ts` |
 | FR-015 | `POST /api/role` 이 `role=editor|admin` 을 `httpOnly; SameSite=Lax` 쿠키로 설정. `getActor(request)` 가 쿠키를 읽어 `{role, userId}` 반환(시드 사용자 2명에 고정 매핑) | `lib/role.ts` |
 | FR-016 | 홈 집계는 서버 컴포넌트가 `services/dashboard.ts` 로 읽는다 (이번 달 `published` 수 / `in_review` 목록 / `approved` 목록 / 광고 요약은 Should 전까지 빈 상태) | `app/page.tsx` |
 | FR-020 | `cost_sheets` + `cost_items` CRUD. `status='draft'` 만 편집, `confirm` 은 `confirmed_at` 기록 후 잠금, `clone` 은 항목 복사 | `services/cost.ts` |
@@ -219,7 +219,7 @@ PRD Q1 의 답(2026-09-13)이다. **헤더 1행, 데이터는 2행부터, 열 �
 | Google Sheets API | 발행 계획 읽기 | 10초 | 0회 | `SHEET_FETCH_FAILED`(502). 기존 계획 유지, 마지막 동기화 시각 표시. `import_logs` 에 실패 행 기록 |
 | Frankfurter API | 환율 | 5초 | 0회 (다음 날 크론이 다시) | 전일 값 유지, `staleDays` 로 경고. 수동 입력 가능. 원화 환산이 필요한 화면은 「n일 전 환율」 표시 |
 | Neon Postgres | 전부 | 드라이버 기본 | 0회 | 500 `INTERNAL`. 격리 불가 — 이 의존성은 단일 장애점이다 |
-| 발행 URL (임의 사이트) | HEAD 확인 | 5초 | 0회 | `url_check='unreachable'`, 발행 완료는 성립 |
+| 발행 URL (임의 사이트) | HEAD 확인 | 5초 | 0회 | 전이 차단(422 `URL_UNREACHABLE`), 담당자가 URL 을 고치거나 지운 뒤 재시도 |
 | Pretendard CDN | 폰트 | — | — | 시스템 폰트 폴백(`font-family` 스택) |
 
 외부 클라이언트는 전부 인터페이스(`LlmClient` · `SheetsClient` · `FxClient` · `UrlChecker`)로 주입되어 테스트에서 모킹한다(§8). 서비스 함수는 클라이언트를 인자로 받는다 — 전역 싱글턴을 import 하지 않는다.

@@ -47,6 +47,7 @@ describe("fail", () => {
     ["NOT_FOUND", 404],
     ["INVALID_TRANSITION", 409],
     ["BLOCKED_TERMS_REMAIN", 422],
+    ["URL_UNREACHABLE", 422],
     ["LLM_FAILED", 502],
     ["LLM_TIMEOUT", 504],
     ["SHEET_FETCH_FAILED", 502],
@@ -58,7 +59,7 @@ describe("fail", () => {
     expect(fail(code, "x").status).toBe(status);
   });
 
-  it("에러 어휘는 표에 있는 10개뿐이다", () => {
+  it("에러 어휘는 표에 있는 11개뿐이다", () => {
     expect(Object.keys(ERROR_CODES).sort()).toEqual(table.map(([c]) => c).sort());
   });
 });
