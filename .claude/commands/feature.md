@@ -117,6 +117,11 @@ exit 3 으로 되돌아온다 — 예측이 빗나간 것이고, 계약을 쓰�
 
 계약 파일은 **네가 직접 쓴다.** 역할 에이전트에게 위임하지 않는다.
 
+역할 제출마다 `rules_read: [{path, sha256}]` 가 있어야 한다 — 지시 파일과
+`rules_dir` 직속 `.md` 의 현재 해시다 (ADR-H055). 없거나 다르면 exit 8 이고
+봉투가 경로만 알려준다. **네가 해시를 대신 계산해 넣지 마라** — 워커가 읽었다는
+흔적이 이것뿐이다.
+
 ### 04-gate 에서
 
 ```bash
@@ -139,7 +144,7 @@ python scripts/pipeline/cli.py contract-trace --run-id <id>
 |---|---|---|
 | 9 | 예산·브랜치·base | **사람에게 묻는다.** 자동으로 쪼개거나 리베이스하지 마라 |
 | 10 | 인프라 프로브 실패 | 멈춘다. 카운터는 소모되지 않았다 |
-| 8 (trace) | Critical 이 남았다 | 고치고 `gate --phase 04 --stage scoped` 후 다시 친다 |
+| 8 (trace) | Critical 이 남았다 | 고치고 `gate --phase 05 --stage loop` 후 다시 친다 (compile 포함 — scoped 단독은 타입 에러를 흘린다, ADR-H046) |
 
 그다음 **봉투가 준 리뷰어 목록을 그대로** 한 메시지 안에서 병렬 호출한다.
 
@@ -258,7 +263,17 @@ python scripts/pipeline/cli.py report --run-id <id>
 
 `08_report_data.json` 하나만 쓴다 (20KB 이하). **08 은 diff 도 코드도 읽지
 않는다.** 표는 실행기가 조립하니 너는 서술만 쓴다 — **재지 않은 것을 숫자로
-적지 마라.**
+적지 마라.** `배운 점`·`next_run` 은 80자 이상이다 — 미달이면 exit 8 로 되묻는다.
+
+`report` 가 exit 11 로 런을 닫으면 **런 기록을 기능 PR 에 싣는다** (ADR-H052):
+
+```bash
+git add docs/harness/pipeline/runs/<id>.md docs/harness/PILOT-LOG.md docs/harness/pipeline/ledger/
+git commit -m "chore: 파이프라인 실행 기록 반영 (<id> 런)"
+python scripts/pipeline/cli.py pr --run-id <id>      # 닫힌 런의 PR 갱신 — 06 record 로 이어지지 않는다
+```
+
+기록이 diff 에 없으면 gap `run_record_missing` 으로 등급이 내려간다.
 
 ## 3. 종료 보고
 

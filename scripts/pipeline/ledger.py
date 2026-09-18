@@ -30,6 +30,11 @@ LEDGER_DIR_REL = "docs/harness/pipeline/ledger"
 TAXONOMY_REL = LEDGER_DIR_REL + "/taxonomy.json"
 FINDINGS_REL = LEDGER_DIR_REL + "/findings.jsonl"
 CHANGELOG_REL = LEDGER_DIR_REL + "/rules_changelog.md"
+# 열린 `deferred` 의 경로별 뷰. **원장의 파생이지 출처가 아니다** — 08 이 매 런
+# 통째로 다시 만든다 (ADR-H051 결정 3). 머리말의 "집계 파일을 두지 않는다" 와
+# 긴장하는 자리라 손으로 고치지 않고 늘 재생성한다.
+DEFERRED_REL = LEDGER_DIR_REL + "/deferred.md"
+NO_PATH = "(경로 미기재)"
 
 # 승격 목적지의 어휘. `none` 은 승격하지 않는 것(에스컬레이션 전용)이다.
 ENFORCEABLE = ("lint", "check", "prose", "none")
@@ -40,7 +45,12 @@ STATUS = ("active", "proposed", "retired", "escalate_only", "unpromotable")
 # 승격 자체가 성립하지 않는 상태. 임계를 넘어도 후보가 되지 않는다.
 NEVER_PROMOTE = ("escalate_only", "unpromotable", "retired")
 
-RESOLUTIONS = ("repaired", "deferred", "dropped_by_enforcement", "warn_only")
+# `false_positive` — 리뷰어가 낸 지적이 **틀렸다**고 메인이 확인한 것 (ADR-H050).
+# 파일럿 140건에 이 축이 없어 오탐이 `deferred` 로 남았고, 승격 집계가 그것을
+# "반복되는 미해결" 로 학습했다. 리뷰어 품질을 세는 유일한 축이라 08 이
+# 리뷰어별로 센다 (`by_reporter`).
+RESOLUTIONS = ("repaired", "deferred", "dropped_by_enforcement", "warn_only",
+               "false_positive")
 SOURCES = ("reviewer", "code-review", "external", "human", "contract-trace")
 
 # (누적 횟수, 최소 distinct_runs). **여섯 숫자 전부 미검증 상속값이다** —
@@ -67,7 +77,7 @@ PROMOTION_VERDICT_AT_RUNS = 9
 
 # 승격 집계에서 빼는 resolution. baseline 기간(§E6)의 관측은 오탐률을 아직
 # 모르는 상태의 것이라 학습 근거가 될 수 없다.
-EXCLUDED_FROM_COUNT = ("warn_only",)
+EXCLUDED_FROM_COUNT = ("warn_only", "false_positive")
 
 _SEVERITY_RANK = {"minor": 0, "major": 1, "critical": 2}
 
@@ -457,6 +467,10 @@ def append(root, run_id, phase, findings):
         # `finding_key` 로 낙하한다.
         if slug is not None:
             row["rule_slug"] = slug
+        # **경로는 받았을 때만 적는다** (ADR-H051 결정 3). 이월 표가 경로별로
+        # 모이는 근거이고, 옛 행은 이 키가 없어 `(경로 미기재)` 버킷이다.
+        if f.get("path"):
+            row["path"] = str(f["path"]).replace("\\", "/")
         row["rule_key"] = rule_key(dict(f, rule_slug=slug))
         rows.append(row)
 
@@ -569,6 +583,63 @@ def observations(root):
     return [folded[i] for i in order]
 
 
+def open_deferred(root):
+    """열린 `deferred` 를 경로별로. [{"path", "rows"}] — `(경로 미기재)` 는 맨 뒤."""
+    groups, order = {}, []
+    for row in observations(root):
+        if row.get("resolution") != "deferred":
+            continue
+        p = row.get("path") or NO_PATH
+        if p not in groups:
+            groups[p] = []
+            order.append(p)
+        groups[p].append(row)
+    order = [p for p in order if p != NO_PATH] + ([NO_PATH] if NO_PATH in groups else [])
+    return [{"path": p, "rows": groups[p]} for p in order]
+
+
+def write_deferred(root):
+    """`deferred.md` 를 **통째로** 다시 쓴다. 반환: 경로."""
+    groups = open_deferred(root)
+    total = sum(len(g["rows"]) for g in groups)
+    lines = ["# 이월 미해결 (deferred)", "",
+             "> 원장(`findings.jsonl`)의 **파생 뷰**이지 출처가 아니다. 08 이 매 런 "
+             "통째로 다시 만든다 — 손으로 고치지 않는다 (ADR-H051). 옛 행은 `path` 가 "
+             "없어 `%s` 한 버킷이다. 00 봉투가 요청 경로와 겹치는 건수를 표기한다."
+             % NO_PATH, "",
+             "열린 `deferred` **%d건** · 경로 %d개" % (total, len(groups)), ""]
+    for g in groups:
+        lines += ["## `%s` — %d건" % (g["path"], len(g["rows"])), "",
+                  "| run_id | severity | category | 제목 | 리뷰어 |",
+                  "|---|---|---|---|---|"]
+        lines += ["| `%s` | %s | %s | %s | %s |"
+                  % (r.get("run_id"), r.get("severity"), r.get("category"),
+                     r.get("title_norm"), ", ".join(r.get("reported_by") or []))
+                  for r in g["rows"]]
+        lines.append("")
+    path = Path(root) / DEFERRED_REL
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines).rstrip("\n") + "\n", encoding="utf-8")
+    return path
+
+
+def _prefix_match(a, b):
+    a, b = a.strip("/"), b.strip("/")
+    return a == b or a.startswith(b + "/") or b.startswith(a + "/")
+
+
+def deferred_overlap(root, request_paths):
+    """요청 경로와 접두로 겹치는 열린 `deferred`. {"count", "paths"}."""
+    hits, count = [], 0
+    for g in open_deferred(root):
+        if g["path"] == NO_PATH:
+            continue
+        if any(_prefix_match(g["path"], q) for q in request_paths or []):
+            hits.append(g["path"])
+            count += len(g["rows"])
+    return {"count": count, "paths": hits}
+
+
 def distinct_runs(root):
     """원장이 본 런의 수.
 
@@ -579,6 +650,30 @@ def distinct_runs(root):
     """
     return len({r.get("run_id") for r in read_all(root)
                 if not r.get("_corrupt") and r.get("run_id")})
+
+
+def by_reporter(root):
+    """리뷰어(`reported_by`)별 resolution 집계 (ADR-H050). **승격과 무관한 관측이다.**
+
+    `repaired / deferred / false_positive` 의 비율이 리뷰어 품질의 첫 실측이다 —
+    파일럿에서는 오탐 축이 없어 "리뷰어 지적 62건 중 27% 수리" 까지만 셌고
+    나머지가 틀린 지적인지 미룬 지적인지 가를 수 없었다. 여러 리뷰어가 함께
+    낸 지적은 각자에게 1 로 센다.
+    """
+    buckets = {}
+    for row in observations(root):
+        res = row.get("resolution")
+        for code in row.get("reported_by") or ["?"]:
+            b = buckets.setdefault(code, {"reporter": code, "total": 0})
+            b["total"] += 1
+            b[res] = b.get(res, 0) + 1
+    out = []
+    for b in buckets.values():
+        for res in RESOLUTIONS:
+            b.setdefault(res, 0)
+        out.append(b)
+    out.sort(key=lambda b: (-b["total"], b["reporter"]))
+    return out
 
 
 def verdict_deadline(root):
