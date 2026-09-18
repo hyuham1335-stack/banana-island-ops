@@ -26,6 +26,7 @@
   "gate": {
     "runner": "adapter", "fail_fast": true, "rerun_failed_once": true,
     "steps": [
+      {"id": "compile", "loop_stage": true},
       {"id": "scoped", "tests_from": "contract", "loop_stage": true},
       {"id": "full", "once_after_loop": true, "assert_tests_ran": true}
     ]
@@ -35,7 +36,9 @@
     "on_exceed": "escalate", "rereview": "delta_single_reviewer",
     "local_repair": {"by": "main", "max_per_run": 3,
                      "criteria": {"failures_max": 2, "files_max": 1,
-                                  "lines_max": 20}}
+                                  "lines_max": 20},
+                     "accounting": ["resolved_from_previous",
+                                    "reraised_from_previous"]}
   },
   "allow": {"agents": "config.roles[].agent"},
   "on_success": "06-pr"
@@ -66,7 +69,7 @@
 ```
 1. precheck --scope pr      정적 · 무료   예산 · 브랜치 · divergence · 인프라
 2. contract-trace           정적 · 무료   계약 ↔ 코드 대조 5종
-3. Critical 있으면 선수리 + gate --stage scoped                     → 2로 복귀
+3. Critical 있으면 선수리 + gate --phase 05 --stage loop             → 2로 복귀
 4. 리뷰:  diff ≤ merge_below_diff_lines  → 단일 에이전트 · 다중 체크리스트
           그보다 크면                      → 병렬 fan-out (profile 상한까지)
           인라인 상한 초과                  → 경로 전달 폴백
@@ -85,7 +88,10 @@ python scripts/pipeline/cli.py contract-trace --run-id {run_id}
   마라** — 범위와 히스토리는 사람의 것이다. **exit 10** 은 인프라이고 카운터를
   소모하지 않는다.
 - `contract-trace` **exit 8** 은 "리뷰어를 부르기 전에 고쳐라"다. 고친 뒤
-  `gate --phase 04 --stage scoped` 로 재게이트하고 다시 친다.
+  `gate --phase 05 --stage loop` 로 재게이트하고 다시 친다. **`loop` 는 이
+  페이즈가 선언한 루프 구간 전부**(compile → scoped)다 — scoped 만 돌리면
+  테스트 러너가 타입체크 없이 통과시킨 타입 에러가 PR 까지 흘러간다
+  (ADR-H046). 수리 뒤 재게이트도 같은 명령이다.
 - `entrypoint_resolver` 가 없으면 그 검사만 빠지고 `skipped` 에 남는다.
   **스킵을 통과로 적지 마라.**
 
@@ -162,7 +168,8 @@ python scripts/pipeline/cli.py contract-trace --run-id {run_id}
      "rule_slug":"어휘를 선언한 category 에서만 · 봉투의 「규칙 슬러그」 절 참고",
      "quote":"raw 원문의 부분문자열","evidence":"…","suggestion":"…"}]},
  "resolved_from_previous":[{"id":"F-2","resolved_by":"…"}],
- "need_more_context":[]}
+ "need_more_context":[],
+ "model_used":"선택 — 실제로 쓴 모델 id. 자진신고이고 실측이 아니다"}
 ```
 
 - **`by_checklist` 는 0건인 체크리스트도 명시한다.** 빈 배열로 적는다. 안 적으면
@@ -278,6 +285,8 @@ python scripts/pipeline/cli.py record --phase 05 --reviewer {code} \
 | `CONTRACT_DEFECT` 발견 | 정책 | 수리하지 않는다 → **에스컬레이션** |
 | diff 가 인라인 상한 초과 | — | **기계가 정한다** — `next` 가 `review.inline_max` 로 재고 봉투가 "경로로 전달하라" 고 말한다. 네 재량이 아니다 (ADR-H042). 폴백 사실이 상태에 남는다 |
 | `review_repair` 초과 · 동일 sig 2회 | 정책 | 에스컬레이션. **계약 결함을 먼저 의심**하라고 패킷에 적는다 |
+| 제출이 내용은 그대로인데 회계 필드만 틀려 exit 8 | 기계 | `format_reject` 이벤트로 센다. `loop.local_repair.accounting` 의 필드는 메인이 고쳐 재제출해도 된다 — quote·헤딩 수·severity 는 여전히 금지 (ADR-H052) |
+| 이전 라운드 지적이 더 높은 심각도로 재상정 | 기계 | `review_repair` 를 **1 지급**(`severity_raised`, 런당 1회). 리뷰어가 처음에 낮게 본 비용을 수리자 예산에서 빼지 않는다. 새 키의 major 는 지급 아님 (ADR-H048) |
 
 **`review_repair.max: 2` · `stuck_after_identical: 2` · `local_repair.max_per_run: 3`
 과 그 판정 기준 세 숫자는 미검증 상속값이다.** 원본 명세에서 왔고 이 리포에서

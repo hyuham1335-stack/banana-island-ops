@@ -21,6 +21,9 @@
      "schema": "claims"}
   ],
   "submit_checks": [
+    {"id": "rules_read_sha", "from": "config.project.instruction_file",
+     "and": "config.project.rules_dir", "claims": "${run.dir}/03_claims.json",
+     "on_fail": 8},
     {"id": "clean_ownership", "from": "config.roles",
      "except": "config.main_owned_paths",
      "claims": "${run.dir}/03_claims.json", "on_fail": 8}
@@ -58,6 +61,12 @@
    템플릿은 `harness/templates/contract.md` 이고 절 제목은
    `config.contract.sections` 가 단일 출처다. 한쪽만 고치면 계약 추적이 조용히
    아무것도 못 찾고 통과한다.
+   **`## 유닛`·`## 진입점` 은 최상위 `- ` 불릿 하나에 항목 하나다.** `### `
+   헤딩·들여쓴 불릿·산문은 파서가 유닛으로 세지 않는다 — 유닛이 0 인 계약은
+   `record` 가 exit 8 로 거부한다 (ADR-H049). 라우트 파일이 관례로 내보내는
+   `POST`·`maxDuration` 같은 이름은 어댑터 `implied_exports` 가 말하므로
+   유닛에 다시 적지 않는다. 진입점 경로의 파라미터는 `{id}` 로 적어도
+   어댑터 `param_styles` 가 실제 폴더명(`[id]`)으로 찾는다.
 2. 계약의 유닛·진입점 항목 수를 세어 프로파일을 확정한다.
 3. **역할 전원을 한 메시지 안에서 동시 호출한다.** 각 역할에게 지시문 패킷을
    준다 — 패킷에 **소유권 표**가 들어 있고, 그 표가 소유 경계의 유일한 출처다.
@@ -95,9 +104,12 @@
 
 ## 읽을 곳
 - {config.project.instruction_file}
-- {config.project.rules_dir}/
+- {config.project.rules_dir}/ 의 직속 .md
 - 계약 파일 (위)
 - .claude/agent-memory/{role.id}/
+
+위 두 줄의 파일은 **읽은 뒤 sha256 을 계산해** 제출의 `rules_read` 에
+`{path, sha256}` 로 적는다 — 게이트가 현재 해시와 대조한다 (ADR-H055).
 
 ## 제출
 {역할별 JSON — 아래 제출 형식}
@@ -108,10 +120,12 @@
 ```json
 {"schema":1,"roles":[
   {"role":"impl","agent":"…","status":"ok|blocked",
+   "rules_read":[{"path":"CLAUDE.md","sha256":"…"},{"path":"docs/PRD.md","sha256":"…"}],
    "claimed_files":["…"],
    "contract_symbols_implemented":["…"],
    "blocked":[],"notes":"…"},
   {"role":"test","agent":"…","status":"ok|blocked",
+   "rules_read":[{"path":"CLAUDE.md","sha256":"…"}],
    "claimed_files":["…"],
    "contract_symbols_covered":["…"],
    "blocked":[]}]}
@@ -119,6 +133,14 @@
 
 `claimed_files` 에 **실제로 쓴 파일 전부**를 적는다. 빠뜨리면 그 파일이
 orphan(아무도 claim 하지 않은 변경)으로 잡혀 03 전체가 거부된다.
+
+**`rules_read` 는 역할마다 필수다** (ADR-H055). `config.project.instruction_file`
+과 `rules_dir` 직속 `.md` 전부의 sha256 을 워커가 파일을 읽어 직접 계산해
+적는다. 누락·불일치는 exit 8 이고 봉투는 경로와 상태만 말한다 — 해시를 주면
+안 열고도 맞추기 때문이다. **해시 일치는 "읽었다" 의 증명이 아니다.** 그러나
+"열어 보지도 않고 지켰다고 보고" 는 막힌다 — 이 하네스가 최악으로 치는 실패가
+그것이다. 규칙 파일이 런 중에 바뀌면(메인이 문서를 고치면) 재제출이 필요하다 —
+바뀐 규칙을 안 본 제출이기 때문이고, 그것이 의도다.
 
 ## 금지
 
@@ -135,6 +157,7 @@ orphan(아무도 claim 하지 않은 변경)으로 잡혀 03 전체가 거부된
 
 | 무엇 | 어떻게 |
 |---|---|
+| `rules_read` 누락·불일치 | exit 8 — 어느 역할의 어느 파일이 빠졌거나 낡았는지 봉투에 나온다. 해시는 안 준다 |
 | 소유 경계 침범 | exit 8 — 어느 파일을 어느 역할이 되돌릴지 봉투에 나온다 |
 | orphan 파일 | exit 8 — claim 에 없는 변경이다. 적었거나 지웠어야 한다 |
 | 컴파일 실패 | 04 의 귀속 규칙으로 소유자를 정해 그 역할에게만 되돌린다 |
