@@ -1,46 +1,48 @@
 {
-  "measured_at": "2026-09-13T18:44:50+0900",
+  "measured_at": "2026-09-19T22:58:32+0900",
   "adapter": "nextjs-ts",
-  "adapter_verified": false,
-  "partial": false,
+  "adapter_verified": true,
+  "partial": true,
   "stages": {
     "compile": {
-      "sec": 3.55,
+      "sec": 23.42,
       "ok": true,
       "exit_code": 0,
       "state": "measured",
-      "measured_at": "2026-09-13T18:44:50+0900"
+      "measured_at": "2026-09-19T22:58:32+0900"
     },
     "lint": {
-      "sec": 7.11,
+      "sec": 46.06,
       "ok": true,
       "exit_code": 0,
       "state": "measured",
-      "measured_at": "2026-09-13T18:44:50+0900"
+      "measured_at": "2026-09-19T22:58:32+0900"
     },
     "check": {
-      "sec": 2.19,
+      "sec": 11.23,
       "ok": true,
       "exit_code": 0,
       "state": "measured",
-      "measured_at": "2026-09-13T18:44:50+0900"
+      "measured_at": "2026-09-19T22:58:32+0900"
     },
     "scoped": {
       "sec": 1.44,
       "ok": true,
       "exit_code": 0,
-      "state": "measured",
-      "measured_at": "2026-09-13T18:44:50+0900"
+      "state": "stale",
+      "measured_at": "2026-09-13T18:44:50+0900",
+      "skipped": true,
+      "stale_reason": "선택 대상 없음 — 계약이 있어야 측정된다. --select <test-name> 으로 수동 측정할 수 있다"
     },
     "full": {
-      "sec": 1.47,
+      "sec": 10.91,
       "ok": true,
       "exit_code": 0,
-      "tests_ran": 16,
-      "suites": 1,
+      "tests_ran": 682,
+      "suites": 38,
       "failures": 0,
       "state": "measured",
-      "measured_at": "2026-09-13T18:44:50+0900"
+      "measured_at": "2026-09-19T22:58:32+0900"
     },
     "e2e": {
       "sec": null,
@@ -49,17 +51,17 @@
       "reason": "cmd:null — 이 스택에 없는 스테이지"
     },
     "build": {
-      "sec": 13.17,
+      "sec": 45.25,
       "ok": true,
       "exit_code": 0,
       "state": "measured",
-      "measured_at": "2026-09-13T18:44:50+0900"
+      "measured_at": "2026-09-19T22:58:32+0900"
     },
     "docs": {
       "sec": null,
       "skipped": true,
-      "state": "absent",
-      "reason": "cmd:null — 이 스택에 없는 스테이지"
+      "state": "na",
+      "reason": "cmd:null — 해당 없음: 문서 빌드 산출물이 없다."
     }
   },
   "retry": {
@@ -76,7 +78,27 @@
     "background_threshold_sec": 180,
     "background_full_regression": false,
     "full_timeout_sec": 300,
-    "tests_ran_floor": 14,
+    "tests_ran_floor": 613,
     "retry_budget": null
+  },
+  "adapter_verified_source": {
+    "runs": [
+      "20260914-1128-e0e4",
+      "20260914-1527-9729",
+      "20260914-1705-3cc3",
+      "20260914-2058-0053",
+      "20260915-0930-3b43",
+      "20260915-1256-5ef4",
+      "20260915-1754-5568",
+      "20260915-2042-728c",
+      "20260916-0038-3305",
+      "20260916-0206-6da3",
+      "20260916-1054-e7ff",
+      "20260916-1347-f193",
+      "20260916-1614-ad59",
+      "20260916-2021-e355",
+      "20260917-0028-40dc"
+    ],
+    "at": "2026-09-19T23:12:38+0900"
   }
 }
