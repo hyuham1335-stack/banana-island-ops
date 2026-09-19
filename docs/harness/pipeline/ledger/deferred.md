@@ -2,17 +2,7 @@
 
 > 원장(`findings.jsonl`)의 **파생 뷰**이지 출처가 아니다. 08 이 매 런 통째로 다시 만든다 — 손으로 고치지 않는다 (ADR-H051). 옛 행은 `path` 가 없어 `(경로 미기재)` 한 버킷이다. 00 봉투가 요청 경로와 겹치는 건수를 표기한다.
 
-열린 `deferred` **89건** · 경로 4개
-
-## `src/app/api/plans/webhook/route.test.ts` — 5건
-
-| run_id | severity | category | 제목 | 리뷰어 |
-|---|---|---|---|---|
-| `20260919-2343-d42d` | minor | TEST_MISSING_FAILURE_PATH | 거부 로그 테스트가 비어 있어도 통과하고, 계약의 reason 값을 잠그지 않는다 | gen |
-| `20260919-2343-d42d` | minor | TEST_MISSING_FAILURE_PATH | 웹훅 라우트 테스트가 실패 봉투의 details 전달을 잠그지 않는다 | gen |
-| `20260919-2343-d42d` | minor | TEST_MISSING_FAILURE_PATH | 동기화 실패 봉투에서 details 를 그대로 넘기는지 잠겨 있지 않다 | test |
-| `20260919-2343-d42d` | minor | TEST_MISSING_FAILURE_PATH | 거부 로그 테스트가 공허하게 통과할 수 있고 계약이 정한 reason 값은 단언되지 않는다 | test |
-| `20260919-2343-d42d` | minor | TEST_MISSING_FAILURE_PATH | "요청 본문을 읽지 않는다" 테스트가 본문을 읽지 않았는지 확인하지 않는다 | test |
+열린 `deferred` **89건** · 경로 8개
 
 ## `src/app/api/plans/webhook/route.ts` — 1건
 
@@ -26,7 +16,41 @@
 |---|---|---|---|---|
 | `20260919-2343-d42d` | minor | CONCURRENCY | 웹훅이 자동 진입점이 되면서 syncPlansFromSheet 가 겹쳐 실행될 수 있고, 순서가 뒤집히면 최신 편집이 사라지거나 새 계획이 on_hold 된다 | data |
 
-## `(경로 미기재)` — 82건
+## `src/services/rules.ts` — 4건
+
+| run_id | severity | category | 제목 | 리뷰어 |
+|---|---|---|---|---|
+| `20260919-2342-9258` | minor | CONTRACT_DEFECT | 화면 조회와 resolveRules 모두 ORDER BY 가 없어 같은 슬롯 규칙 선택·출력 순서가 비결정적이다 | data |
+| `20260919-2342-9258` | minor | CONTRACT_DEFECT | 계약이 입력 순서에 기대면서 brand_rules 조회의 정렬을 정하지 않는다 | gen |
+| `20260919-2342-9258` | minor | OTHER | listBrandStandards 의 StandardRuleRow 캐스팅이 select 목록과 타입의 어긋남을 타입검사에서 가린다 | arch |
+| `20260919-2342-9258` | minor | DOC_CODE_DRIFT | services/rules.ts 모듈 머리 주석이 products 를 읽는 새 함수와 모순된다 | arch |
+
+## `src/components/shell/Nav.tsx` — 2건
+
+| run_id | severity | category | 제목 | 리뷰어 |
+|---|---|---|---|---|
+| `20260919-2342-9258` | minor | DOC_CODE_DRIFT | Nav 모듈 주석이 /rules 링크 추가와 모순된다 | gen |
+| `20260919-2342-9258` | minor | DOC_CODE_DRIFT | Nav.tsx 주석이 링크 세 개와 나머지 메뉴 6개라고 적고 있으나 /rules 항목이 추가됐다 | arch |
+
+## `src/lib/rules-merge.ts` — 1건
+
+| run_id | severity | category | 제목 | 리뷰어 |
+|---|---|---|---|---|
+| `20260919-2342-9258` | minor | OTHER | 채널별 규칙 적용 조건이 resolveRules(SQL)와 buildBrandStandards(메모리) 두 곳에 있고 둘이 같은지 확인하는 테스트가 없다 | arch |
+
+## `src/app/rules/page.tsx` — 1건
+
+| run_id | severity | category | 제목 | 리뷰어 |
+|---|---|---|---|---|
+| `20260919-2342-9258` | major | NAMING | 계약에 없는 public 심볼 dynamic 가 생겼다 |  |
+
+## `src/services/rules.test.ts` — 1건
+
+| run_id | severity | category | 제목 | 리뷰어 |
+|---|---|---|---|---|
+| `20260919-2342-9258` | minor | TEST_MISSING_FAILURE_PATH | status 필터 단언이 조건을 평탄한 부분문자열로만 봐서 연산자를 잠그지 못하고 정당한 결합 조건에서는 거짓 실패한다 | test |
+
+## `(경로 미기재)` — 78건
 
 | run_id | severity | category | 제목 | 리뷰어 |
 |---|---|---|---|---|
@@ -40,7 +64,6 @@
 | `20260914-2058-0053` | major | INPUT_VALIDATION | buildTitlesUserPrompt의 <user_input> 구분자가 입력값에 같은 종료 태그를 넣으면 그대로 깨져 05의 프롬프트 인젝션 완화(sec F-2)가 우회된다 |  |
 | `20260914-2058-0053` | major | OTHER | generateTitles의 시간 예산 타이머가 resolveRules(DB 조회 2회) 완료 이후부터 시작돼, DB 지연이 TITLE_TOTAL_BUDGET_MS·maxDuration=30 계산에서 빠진다 |  |
 | `20260914-2058-0053` | major | OTHER | JSON 복구용 정규식이 응답 전체에 걸쳐 탐욕적으로 매치돼, 유효한 JSON 뒤에 붙은 부가 텍스트가 있으면 파싱 실패로 오판해 재시도 예산을 낭비한다 |  |
-| `20260914-2058-0053` | minor | TEST_MISSING_FAILURE_PATH | buildTitlesSystemPrompt/buildTitlesUserPrompt/buildTitleRegenPrompt에 프롬프트 내용을 직접 검증하는 테스트가 없다 |  |
 | `20260915-0930-3b43` | minor | CONTRACT_MISMATCH | parseJson 마지막 폴백 분기가 다른 실패 분기와 다른 오류 타입으로 빠져나간다 | gen |
 | `20260915-1256-5ef4` | minor | CONTRACT_MISMATCH | INSERT/재시도 UPDATE의 RETURNING 절에 계약이 명시한 updatedAt이 빠졌다 | gen |
 | `20260915-1256-5ef4` | minor | OTHER | createContentWithBody 가 sales_channels 의 같은 행을 두 번 조회한다 | data |
@@ -91,7 +114,6 @@
 | `20260916-1054-e7ff` | major | OTHER | 0.0.0.0/:: (미지정 주소)가 PRIVATE_HOST_PATTERNS 에 없어 루프백 우회 가능 | sec |
 | `20260916-1054-e7ff` | major | CONTRACT_DEFECT | DNS 리바인딩을 범위 밖으로 받아들인 계약 근거가 인증 없는 공개 엔드포인트라는 실제 노출과 맞지 않는다 | sec |
 | `20260916-1347-f193` | minor | CONTRACT_DEFECT | 광고 성과 표 emptyLabel에 내부 MoSCoW 표기 'Should'가 사용자 화면에 그대로 노출된다 | gen |
-| `20260916-1347-f193` | minor | TEST_MISSING_FAILURE_PATH | publishedThisMonth=0 경계가 테스트되지 않는다 | test |
 | `20260916-1347-f193` | major | TEST_MISSING_FAILURE_PATH | 계약의 유닛 src/components/ui/KpiBand.tsx · KpiBand({ label, now }: { label: string; now: number }): JSX.Element 를 참조하는 테스트가 없다 |  |
 | `20260916-1347-f193` | major | TEST_MISSING_FAILURE_PATH | 계약의 유닛 src/components/ui/Table.tsx · Table<T>({ headers, rows, renderRow, emptyLabel }: { headers: string[]; rows: T[]; renderRow: (row: T) => React.ReactNode[]; emptyLabel: string }): JSX.Element 를 참조하는 테스트가 없다 |  |
 | `20260916-1347-f193` | major | TEST_MISSING_FAILURE_PATH | 계약의 유닛 src/app/page.tsx · Home(): Promise<JSX.Element> 를 참조하는 테스트가 없다 |  |
@@ -106,8 +128,6 @@
 | `20260916-1614-ad59` | major | TEST_MISSING_FAILURE_PATH | 계약의 유닛 src/components/contents/ContentActions.tsx · ContentActions 를 참조하는 테스트가 없다 |  |
 | `20260916-1614-ad59` | major | NAMING | 계약에 없는 public 심볼 maxDuration 가 생겼다 |  |
 | `20260916-1614-ad59` | minor | OTHER | createContentWithBody와 regenerateContentBody의 예산 계산+FR-006 자동재생성 로직이 거의 그대로 중복된다 |  |
-| `20260917-0028-40dc` | minor | TEST_MISSING_FAILURE_PATH | createNewVersion 의 INTERNAL(예외) catch 분기가 테스트되지 않음 | gen |
-| `20260917-0028-40dc` | minor | TEST_MISSING_FAILURE_PATH | 4단계 UPDATE 성공 후 5단계 INSERT 실패 경로가 테스트되지 않았다 | data |
 | `20260917-0028-40dc` | minor | TX_BOUNDARY | INSERT 실패 시 보상 UPDATE(publish_plan_id 복구)가 4단계와 달리 가드 없이 무조건 쓴다 | data |
 | `20260917-0028-40dc` | minor | OTHER | 새 버전 제목이 항상 리터럴 " (v2)" 를 붙여 재-재생성 시 접미사가 중복된다 |  |
 | `20260917-0028-40dc` | minor | OTHER | ContentActions.tsx 조기 return null 가드가 상태 5종을 전부 나열해 도달 불가능한 죽은 코드가 됐다 |  |

@@ -63,7 +63,7 @@
 | FR-022 | `refreshFx(fxClient, date)` — Frankfurter `latest?from=USD&to=KRW,PHP` 1회 호출 → USD→KRW 직접, PHP→KRW = (USD→KRW)/(USD→PHP) 계산 → 2행 upsert(`source='api'`). 크론 라우트는 `Authorization: Bearer ${CRON_SECRET}` 검사. `getFx(date)` 는 그 날짜 이하 최신 행을 돌려주고 `staleDays` 를 함께 준다 | `services/fx.ts`, `lib/fx-client.ts` |
 | FR-023 | `ad_performance` 입력(월 단위 기간 고정, `(channel_id, period_start, period_end)` upsert, `input_source='manual'`) + 조회 시 `fx_rates` 로 원화 환산, `roas = revenue/spend` | `services/ads.ts` |
 | FR-024 | `POST /api/plans/webhook` — 헤더 `X-Sheet-Secret` 이 `SHEET_WEBHOOK_SECRET` 와 같을 때만 FR-001 을 `trigger='webhook'` 으로 실행. Apps Script 쪽은 `onEdit` 디바운스(마지막 편집 후 60초) — 리포 밖 문서로 남긴다 | `app/api/plans/webhook/route.ts` |
-| FR-025 | 서버 컴포넌트가 `brand_rules`·`sales_channels` 를 읽어 표로 | `app/std/page.tsx` |
+| FR-025 | 서버 컴포넌트가 `listBrandStandards()` 로 `brand_rules`(active)·`sales_channels`·`products` 를 읽고, 순수 함수 `buildBrandStandards()` 가 채널별로 `mergeRules` 를 재사용해 채널별 기준·금칙어·필수 표현·제품 범위 예외 표로 조립 | `app/rules/page.tsx`, `services/rules.ts`, `lib/rules-merge.ts` |
 
 ### 프롬프트 조립 규칙 (FR-004·005 공통)
 
