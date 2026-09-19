@@ -63,7 +63,7 @@
 | FR-022 | `refreshFx(fxClient, date)` — Frankfurter `latest?from=USD&to=KRW,PHP` 1회 호출 → USD→KRW 직접, PHP→KRW = (USD→KRW)/(USD→PHP) 계산 → 2행 upsert(`source='api'`). 크론 라우트는 `Authorization: Bearer ${CRON_SECRET}` 검사. `getFx(date)` 는 그 날짜 이하 최신 행을 돌려주고 `staleDays` 를 함께 준다 | `services/fx.ts`, `lib/fx-client.ts` |
 | FR-023 | `ad_performance` 입력(월 단위 기간 고정, `(channel_id, period_start, period_end)` upsert, `input_source='manual'`) + 조회 시 `fx_rates` 로 원화 환산, `roas = revenue/spend` | `services/ads.ts` |
 | FR-024 | `POST /api/plans/webhook` — 헤더 `X-Sheet-Secret` 이 `SHEET_WEBHOOK_SECRET` 와 같을 때만 FR-001 을 `trigger='webhook'` 으로 실행. Apps Script 쪽은 `onEdit` 디바운스(마지막 편집 후 60초) — 리포 밖 문서로 남긴다 | `app/api/plans/webhook/route.ts` |
-| FR-025 | 서버 컴포넌트가 `brand_rules`·`sales_channels` 를 읽어 표로 | `app/std/page.tsx` |
+| FR-025 | 서버 컴포넌트가 `listBrandStandards()` 로 `brand_rules`(active)·`sales_channels`·`products` 를 읽고, 순수 함수 `buildBrandStandards()` 가 채널별로 `mergeRules` 를 재사용해 채널별 기준·금칙어·필수 표현·제품 범위 예외 표로 조립 | `app/rules/page.tsx`, `services/rules.ts`, `lib/rules-merge.ts` |
 
 ### 프롬프트 조립 규칙 (FR-004·005 공통)
 
@@ -110,7 +110,7 @@ flowchart LR
 | 원가항목 | `cost_items` | `cost_sheet_id` FK, `stage` enum(`ph`,`kr`,`us`), `cost_kind`, `amount`, `currency`, `basis` enum(`per_unit`,`per_batch`), `batch_qty`, `note` | — |
 | 원가계산결과 | `cost_calc_results` | `cost_sheet_id` FK, `channel_id` FK, `fx_php`, `fx_usd`, `unit_cost_krw`, `price_krw`, `margin_rate`, `fixed_cost_krw`, `bep_qty`, `kind` enum(`actual`,`simulation`), `calculated_at` | — |
 | 광고성과 | `ad_performance` | `channel_id` FK, `product_id` FK nullable, `content_id` FK nullable, `import_id` FK, `period_start`, `period_end`, `spend`, `revenue`, `orders`, `currency`, `input_source` enum(`csv`,`manual`,`sheet`,`api`) | UK `(channel_id, period_start, period_end)` |
-| 가져오기이력 | `import_logs` | `executed_by` FK nullable, `target` enum(`ad_performance`,`content_performance`,`cost_items`,`publish_plans`), `input_source` enum, `source_ref`, `total_rows`, `ok_rows`, `failed_rows`, `errors` jsonb | idx `(target, created_at desc)` |
+| 가져오기이력 | `import_logs` | `executed_by` FK nullable, `target` enum(`ad_performance`,`content_performance`,`cost_items`,`publish_plans`), `input_source` enum, `source_ref`, `total_rows`, `ok_rows`, `failed_rows`, `errors` jsonb, `trigger` enum(`manual`,`webhook`) NOT NULL DEFAULT `manual` — ERD v7 에 없는 추가 컬럼(FR-024, 웹훅 동기화 구분) | idx `(target, created_at desc)` |
 
 모든 테이블에 `created_at timestamptz default now()`.
 

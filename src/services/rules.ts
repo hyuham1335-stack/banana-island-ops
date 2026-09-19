@@ -1,8 +1,15 @@
 import { and, eq, or } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
-import { brandRules, salesChannels } from "@/lib/db/schema";
+import { brandRules, products, salesChannels } from "@/lib/db/schema";
 import type { ErrorCode } from "@/lib/http";
-import { mergeRules, type BrandRuleRow, type ResolvedRules } from "@/lib/rules-merge";
+import {
+  buildBrandStandards,
+  mergeRules,
+  type BrandRuleRow,
+  type BrandStandards,
+  type ResolvedRules,
+  type StandardRuleRow,
+} from "@/lib/rules-merge";
 
 /**
  * FR-003 브랜드 규칙 병합 조회 — docs/API_SPEC.md 77~96행, docs/TRD.md §「FR-003」.
@@ -89,6 +96,64 @@ export async function resolveRules(
     return {
       ok: false,
       error: { code: "INTERNAL", message: "규칙 조회 중 오류가 발생했습니다." },
+    };
+  }
+}
+
+/**
+ * FR-025 브랜드 기준 화면 조회 — docs/API_SPEC.md·docs/TRD.md 의 `/rules`.
+ * brand_rules(active)·sales_channels·products 를 병렬로 읽어 buildBrandStandards 에 넘긴다.
+ */
+export async function listBrandStandards(deps: { db: Db }): Promise<Result<BrandStandards>> {
+  try {
+    const rulesQuery = deps.db
+      .select({
+        id: brandRules.id,
+        scope: brandRules.scope,
+        ruleType: brandRules.ruleType,
+        content: brandRules.content,
+        detectPattern: brandRules.detectPattern,
+        alternative: brandRules.alternative,
+        reason: brandRules.reason,
+        legalBasis: brandRules.legalBasis,
+        severity: brandRules.severity,
+        version: brandRules.version,
+        lang: brandRules.lang,
+        country: brandRules.country,
+        channelId: brandRules.channelId,
+        productId: brandRules.productId,
+        createdAt: brandRules.createdAt,
+      })
+      .from(brandRules);
+    rulesQuery.where(eq(brandRules.status, "active"));
+
+    const channelsQuery = deps.db
+      .select({ id: salesChannels.id, name: salesChannels.name, country: salesChannels.country, lang: salesChannels.lang })
+      .from(salesChannels);
+
+    const productsQuery = deps.db.select({ id: products.id, name: products.name }).from(products);
+
+    const [rules, channels, productRows] = await Promise.all([rulesQuery, channelsQuery, productsQuery]);
+
+    // rules-merge.ts 가 schema.ts 의 pgEnum 에서 직접 타입을 유도하므로 이 캐스팅은
+    // 값을 좁히지 않는 항등 캐스팅이다(select 목록이 StandardRuleRow 의 필드와 정확히 일치).
+    const data = buildBrandStandards({
+      rules: rules as StandardRuleRow[],
+      channels,
+      products: productRows,
+    });
+
+    return { ok: true, data };
+  } catch (err) {
+    console.error(
+      JSON.stringify({
+        event: "brand_standards_failed",
+        message: err instanceof Error ? err.message : String(err),
+      }),
+    );
+    return {
+      ok: false,
+      error: { code: "INTERNAL", message: "브랜드 기준 조회 중 오류가 발생했습니다." },
     };
   }
 }

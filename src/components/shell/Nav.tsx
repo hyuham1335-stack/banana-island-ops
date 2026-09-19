@@ -34,6 +34,16 @@ export function Nav({ role }: { role: Actor["role"] }) {
           <small>{item.hint}</small>
         </Link>
       ))}
+      <div className="nav-sep" />
+      <div className="nav-label">기준 자료</div>
+      <Link
+        href="/rules"
+        className="nav-item"
+        aria-current={pathname.startsWith("/rules") ? "page" : undefined}
+      >
+        브랜드 기준
+        <small>톤·필수표현·금칙어·타깃</small>
+      </Link>
     </nav>
   );
 }

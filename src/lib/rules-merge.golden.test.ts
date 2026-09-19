@@ -1,6 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { mergeRules } from "./rules-merge";
-import type { BanRule, BrandRuleRow, ResolvedRules } from "./rules-merge";
+import { buildBrandStandards, mergeRules } from "./rules-merge";
+import type {
+  BanRule,
+  BanStandard,
+  BrandRuleRow,
+  BrandStandards,
+  ChannelStandard,
+  MustGroup,
+  ProductException,
+  ResolvedRules,
+  StandardChannelInput,
+  StandardProductInput,
+  StandardRuleRow,
+} from "./rules-merge";
 
 /**
  * 계약: FR-003 「유닛 · src/lib/rules-merge.ts · mergeRules」
@@ -390,5 +402,334 @@ describe("mergeRules", () => {
     const result = mergeRules(rows);
     const ban: BanRule | undefined = result.ban[0];
     expect(ban?.label).toBe("이 문구가 곧 label 이다");
+  });
+});
+
+/**
+ * 계약: FR-025 「유닛 · src/lib/rules-merge.ts · buildBrandStandards」
+ * (`_workspace/contract_fr-025-brand-rules-screen.md` 37~46행)
+ *
+ * 규칙(계약 원문 요약):
+ *   - isEmpty = rules.length===0. 비어 있으면 나머지 배열 전부 [].
+ *   - scopeLabel: common→공통 · country→국가 {country} · channel→채널 {채널명} · product→제품 {제품명}.
+ *     이름 못 찾으면 채널 #{id} / 제품 #{id} 폴백.
+ *   - channels: channel-scope 규칙이 ≥1 있는 채널만, id 오름차순. 채널마다
+ *     lang===ch.lang && (common || country&&country===ch.country || channel&&channelId===ch.id)
+ *     인 행을 골라 mergeRules 를 호출하고 persona/tone/format/version 을 그대로 쓴다.
+ *     updatedAt = 적용 행 createdAt 최댓값(적용 행 없으면 null).
+ *   - bans: ruleType==="ban" 전부, id 중복 제거(첫 등장 유지), severity null→"block".
+ *   - musts: ruleType==="must" 이고 scope∈{common,country,channel} 를 (lang,scopeLabel) 로 묶음.
+ *     product scope must 는 musts 에 넣지 않는다(productExceptions 로).
+ *   - productExceptions: scope=product 를 (productId,lang) 로 묶음. persona/tone/format 은
+ *     해당 ruleType 첫 행의 content, 없으면 null. must 는 그룹의 must content. ban 은 여기 없다.
+ *     affectedChannels = 출력 channels 중 lang 같은 채널의 name(출력 순서).
+ */
+
+function standardRow(
+  overrides: Partial<StandardRuleRow> &
+    Pick<StandardRuleRow, "id" | "scope" | "ruleType" | "content" | "version" | "lang">,
+): StandardRuleRow {
+  return {
+    detectPattern: null,
+    alternative: null,
+    reason: null,
+    legalBasis: null,
+    severity: null,
+    country: null,
+    channelId: null,
+    productId: null,
+    createdAt: new Date("2026-01-01T00:00:00Z"),
+    ...overrides,
+  };
+}
+
+const D1 = new Date("2026-01-01T00:00:00Z");
+const D2 = new Date("2026-02-01T00:00:00Z");
+const D3 = new Date("2026-03-01T00:00:00Z");
+
+describe("buildBrandStandards", () => {
+  it("rules 가 비어 있으면 isEmpty:true 이고 channels·products 입력이 있어도 나머지 배열은 전부 []", () => {
+    const channels: StandardChannelInput[] = [{ id: 1, name: "채널A", country: "KR", lang: "ko" }];
+    const products: StandardProductInput[] = [{ id: 10, name: "제품A" }];
+
+    const result: BrandStandards = buildBrandStandards({ rules: [], channels, products });
+
+    expect(result).toEqual<BrandStandards>({
+      isEmpty: true,
+      channels: [],
+      bans: [],
+      musts: [],
+      productExceptions: [],
+    });
+  });
+
+  it("channel-scope 규칙이 없는 채널은 channels 결과에서 제외된다", () => {
+    const channels: StandardChannelInput[] = [
+      { id: 1, name: "채널A", country: "KR", lang: "ko" },
+      { id: 2, name: "채널B", country: "KR", lang: "ko" },
+    ];
+    const rules: StandardRuleRow[] = [
+      standardRow({ id: 1, scope: "common", ruleType: "persona", content: "공통", lang: "ko", version: 1 }),
+      standardRow({ id: 2, scope: "channel", ruleType: "tone", content: "채널A 톤", lang: "ko", channelId: 1, version: 1 }),
+    ];
+
+    const result = buildBrandStandards({ rules, channels, products: [] });
+
+    expect(result.channels.map((c) => c.channelId)).toEqual([1]);
+  });
+
+  it("채널 병합은 mergeRules 결과(persona/tone/format/version)를 그대로 쓰고, updatedAt 은 적용 행 createdAt 최댓값이다", () => {
+    const channels: StandardChannelInput[] = [{ id: 5, name: "채널X", country: "KR", lang: "ko" }];
+    const rules: StandardRuleRow[] = [
+      standardRow({ id: 1, scope: "common", ruleType: "persona", content: "공통 페르소나", lang: "ko", version: 1, createdAt: D1 }),
+      standardRow({ id: 2, scope: "channel", ruleType: "format", content: "채널 포맷", lang: "ko", channelId: 5, version: 3, createdAt: D2 }),
+    ];
+
+    const result = buildBrandStandards({ rules, channels, products: [] });
+    const oracle = mergeRules(rules);
+
+    expect(result.channels).toHaveLength(1);
+    const ch: ChannelStandard = result.channels[0];
+    expect(ch.channelId).toBe(5);
+    expect(ch.name).toBe("채널X");
+    expect(ch.lang).toBe("ko");
+    expect(ch.persona).toBe(oracle.persona);
+    expect(ch.tone).toBe(oracle.tone);
+    expect(ch.format).toBe(oracle.format);
+    expect(ch.version).toBe(oracle.version);
+    expect(ch.persona).toBe("공통 페르소나");
+    expect(ch.format).toBe("채널 포맷");
+    // updatedAt = 적용 행(id 1,2) createdAt 최댓값 = D2 (id 2 가 더 늦음).
+    expect(ch.updatedAt).toEqual(D2);
+  });
+
+  it("country-scope 행이 채널의 country 와 실제로 일치하면(배제 디코이가 아니라) 병합에 포함되고 common 을 덮는다 — common·country·channel 셋 다 채워진다", () => {
+    const channels: StandardChannelInput[] = [{ id: 7, name: "채널KR", country: "KR", lang: "ko" }];
+    const rules: StandardRuleRow[] = [
+      standardRow({ id: 1, scope: "common", ruleType: "persona", content: "공통 페르소나", lang: "ko", version: 1 }),
+      // country 가 채널의 country(KR)와 일치 — 배제되지 않고 실제로 채택돼야 한다.
+      standardRow({ id: 2, scope: "country", ruleType: "persona", content: "국가 페르소나", lang: "ko", country: "KR", version: 2 }),
+      standardRow({ id: 3, scope: "country", ruleType: "tone", content: "국가 톤", lang: "ko", country: "KR", version: 1 }),
+      standardRow({ id: 4, scope: "channel", ruleType: "format", content: "채널 포맷", lang: "ko", channelId: 7, version: 1 }),
+    ];
+
+    const result = buildBrandStandards({ rules, channels, products: [] });
+
+    expect(result.channels).toHaveLength(1);
+    const ch = result.channels[0];
+    // country(id=2) 가 common(id=1) 을 이긴다 — mergeRules 의 scope 우선순위 그대로.
+    expect(ch.persona).toBe("국가 페르소나");
+    expect(ch.tone).toBe("국가 톤");
+    expect(ch.format).toBe("채널 포맷");
+  });
+
+  it("updatedAt 은 적용 행만의 createdAt 최댓값이다 — 덮인(비적용) 행의 더 늦은 createdAt 은 무시하고, 적용 행이 시간순과 무관하게 배열에 놓여도 진짜 최댓값 Date 인스턴스를 그대로 돌려준다", () => {
+    const channels: StandardChannelInput[] = [{ id: 9, name: "채널Y", country: "KR", lang: "ko" }];
+    const coveredDate = new Date("2026-05-01T00:00:00Z"); // 가장 늦지만 탈락(비적용) 행 — 최댓값 계산에서 빠져야 한다.
+    const appliedMidDate = new Date("2026-02-01T00:00:00Z");
+    const appliedEarliestDate = new Date("2026-01-01T00:00:00Z");
+    const appliedMaxDate = new Date("2026-04-01T00:00:00Z"); // 적용 행 중 진짜 최댓값 — 배열에서는 마지막이 아니라 중간에 있다.
+    const rules: StandardRuleRow[] = [
+      standardRow({ id: 1, scope: "channel", ruleType: "persona", content: "채널 페르소나(적용)", lang: "ko", channelId: 9, version: 1, createdAt: appliedMidDate }),
+      // channel persona 에 밀려 탈락하는 common persona — createdAt 이 가장 늦지만 비적용이므로 무시돼야 한다.
+      standardRow({ id: 2, scope: "common", ruleType: "persona", content: "공통 페르소나(탈락)", lang: "ko", version: 1, createdAt: coveredDate }),
+      standardRow({ id: 3, scope: "channel", ruleType: "tone", content: "채널 톤(적용, 최댓값)", lang: "ko", channelId: 9, version: 1, createdAt: appliedMaxDate }),
+      standardRow({ id: 4, scope: "channel", ruleType: "format", content: "채널 포맷(적용, 최솟값)", lang: "ko", channelId: 9, version: 1, createdAt: appliedEarliestDate }),
+    ];
+
+    const result = buildBrandStandards({ rules, channels, products: [] });
+
+    expect(result.channels).toHaveLength(1);
+    const ch = result.channels[0];
+    expect(ch.persona).toBe("채널 페르소나(적용)");
+    // 새 Date 를 만들지 않고 그 행의 값을 그대로 썼는지 — 참조 동일성(toBe)으로 확인.
+    expect(ch.updatedAt).toBe(appliedMaxDate);
+  });
+
+  it("channel-scope 규칙은 있어 channels 목록에는 들어가지만 그 규칙의 lang 이 채널과 달라 적용 행이 0개면 updatedAt 은 null 이다", () => {
+    const channels: StandardChannelInput[] = [{ id: 20, name: "채널Z", country: "KR", lang: "ko" }];
+    const rules: StandardRuleRow[] = [
+      // channel-scope 조건(row.scope==="channel" && row.channelId===ch.id)만 보고 채널 목록에는
+      // 포함되지만, 실제 병합 대상(applicable)은 lang 일치도 요구하므로 이 행은 제외된다.
+      standardRow({ id: 1, scope: "channel", ruleType: "tone", content: "EN 채널 톤", lang: "en", channelId: 20, version: 1 }),
+    ];
+
+    const result = buildBrandStandards({ rules, channels, products: [] });
+
+    expect(result.channels).toHaveLength(1);
+    const ch = result.channels[0];
+    expect(ch.tone).toBe("");
+    expect(ch.updatedAt).toBeNull();
+  });
+
+  it("채널 병합에는 다른 lang·country·channel 의 규칙이 섞이지 않는다", () => {
+    const channels: StandardChannelInput[] = [{ id: 1, name: "채널A", country: "KR", lang: "ko" }];
+    const rules: StandardRuleRow[] = [
+      standardRow({ id: 1, scope: "channel", ruleType: "tone", content: "채널 톤", lang: "ko", channelId: 1, version: 1, createdAt: D1 }),
+      // 디코이: 다른 국가의 country-scope 규칙 — ch1.country="KR" 이므로 섞이면 안 된다.
+      standardRow({ id: 2, scope: "country", ruleType: "persona", content: "잘못된 국가", lang: "ko", country: "US", version: 1, createdAt: D1 }),
+      // 디코이: 다른 언어의 common-scope 규칙 — ch1.lang="ko" 이므로 섞이면 안 된다.
+      standardRow({ id: 3, scope: "common", ruleType: "persona", content: "잘못된 언어", lang: "en", version: 1, createdAt: D1 }),
+      // 디코이: 다른 채널을 겨냥한 channel-scope 규칙.
+      standardRow({ id: 4, scope: "channel", ruleType: "format", content: "잘못된 채널", lang: "ko", channelId: 999, version: 1, createdAt: D1 }),
+    ];
+
+    const result = buildBrandStandards({ rules, channels, products: [] });
+
+    expect(result.channels).toHaveLength(1);
+    const ch = result.channels[0];
+    expect(ch.tone).toBe("채널 톤");
+    // 디코이가 섞였다면 persona·format 이 채워졌을 것 — 섞이지 않았으므로 공백이다.
+    expect(ch.persona).toBe("");
+    expect(ch.format).toBe("");
+  });
+
+  it("채널은 입력 순서와 무관하게 channel id 오름차순으로 정렬된다", () => {
+    const channels: StandardChannelInput[] = [
+      { id: 3, name: "채널C", country: "KR", lang: "ko" },
+      { id: 1, name: "채널A", country: "KR", lang: "ko" },
+      { id: 2, name: "채널B", country: "KR", lang: "ko" },
+    ];
+    const rules: StandardRuleRow[] = [3, 1, 2].map((cid, i) =>
+      standardRow({ id: 100 + i, scope: "channel", ruleType: "tone", content: `채널${cid} 톤`, lang: "ko", channelId: cid, version: 1 }),
+    );
+
+    const result = buildBrandStandards({ rules, channels, products: [] });
+
+    expect(result.channels.map((c) => c.channelId)).toEqual([1, 2, 3]);
+  });
+
+  it("bans: scopeLabel 4종 + 이름 못 찾으면 폴백 + severity null→block + id 중복 제거(첫 등장 유지)", () => {
+    const channels: StandardChannelInput[] = [{ id: 1, name: "채널A", country: "KR", lang: "ko" }];
+    const products: StandardProductInput[] = [{ id: 10, name: "제품A" }];
+    const rules: StandardRuleRow[] = [
+      standardRow({
+        id: 100,
+        scope: "common",
+        ruleType: "ban",
+        content: "공통금칙",
+        lang: "ko",
+        severity: "block",
+        alternative: "대안1",
+        reason: "사유1",
+        legalBasis: "근거1",
+        version: 1,
+      }),
+      standardRow({ id: 101, scope: "country", ruleType: "ban", content: "국가금칙", lang: "ko", country: "KR", severity: null, version: 1 }),
+      standardRow({ id: 102, scope: "channel", ruleType: "ban", content: "채널금칙", lang: "ko", channelId: 1, severity: "warn", version: 1 }),
+      standardRow({ id: 103, scope: "channel", ruleType: "ban", content: "미지채널금칙", lang: "ko", channelId: 77, severity: "warn", version: 1 }),
+      standardRow({ id: 104, scope: "product", ruleType: "ban", content: "제품금칙", lang: "ko", productId: 10, severity: "block", version: 1 }),
+      standardRow({ id: 105, scope: "product", ruleType: "ban", content: "미지제품금칙", lang: "ko", productId: 999, severity: "block", version: 1 }),
+      // 중복 id — 첫 등장(위 id 100)만 유지되고 이 행은 무시된다.
+      standardRow({ id: 100, scope: "common", ruleType: "ban", content: "중복무시", lang: "ko", severity: "block", version: 1 }),
+    ];
+
+    const result = buildBrandStandards({ rules, channels, products });
+
+    expect(result.bans.map((b) => b.ruleId)).toEqual([100, 101, 102, 103, 104, 105]);
+
+    const byId = new Map(result.bans.map((b) => [b.ruleId, b]));
+    expect(byId.get(100)).toMatchObject<Partial<BanStandard>>({ label: "공통금칙", scopeLabel: "공통", severity: "block" });
+    expect(byId.get(101)).toMatchObject<Partial<BanStandard>>({ label: "국가금칙", scopeLabel: "국가 KR", severity: "block" });
+    expect(byId.get(102)).toMatchObject<Partial<BanStandard>>({ label: "채널금칙", scopeLabel: "채널 채널A", severity: "warn" });
+    expect(byId.get(103)).toMatchObject<Partial<BanStandard>>({ label: "미지채널금칙", scopeLabel: "채널 #77", severity: "warn" });
+    expect(byId.get(104)).toMatchObject<Partial<BanStandard>>({ label: "제품금칙", scopeLabel: "제품 제품A", severity: "block" });
+    expect(byId.get(105)).toMatchObject<Partial<BanStandard>>({ label: "미지제품금칙", scopeLabel: "제품 #999", severity: "block" });
+  });
+
+  it("musts: (lang, scopeLabel) 로 그룹핑하고 product scope must 는 제외한다 — 채널 이름 폴백도 적용된다", () => {
+    const channels: StandardChannelInput[] = [{ id: 1, name: "채널A", country: "KR", lang: "ko" }];
+    const rules: StandardRuleRow[] = [
+      standardRow({ id: 200, scope: "common", ruleType: "must", content: "필수1", lang: "ko", version: 1, createdAt: D1 }),
+      standardRow({ id: 201, scope: "common", ruleType: "must", content: "필수2", lang: "ko", version: 1, createdAt: D2 }),
+      standardRow({ id: 202, scope: "country", ruleType: "must", content: "국가필수", lang: "ko", country: "KR", version: 1 }),
+      standardRow({ id: 203, scope: "channel", ruleType: "must", content: "채널필수", lang: "ko", channelId: 1, version: 1 }),
+      // product scope must — musts 에는 나오지 않고 productExceptions 몫이다.
+      standardRow({ id: 204, scope: "product", ruleType: "must", content: "제품필수", lang: "ko", productId: 10, version: 1 }),
+      standardRow({ id: 205, scope: "common", ruleType: "must", content: "EN필수", lang: "en", version: 1 }),
+      // 미지 채널 — scopeLabel 폴백 "채널 #55".
+      standardRow({ id: 206, scope: "channel", ruleType: "must", content: "미지채널필수", lang: "ko", channelId: 55, version: 1 }),
+    ];
+
+    const result = buildBrandStandards({ rules, channels, products: [] });
+
+    expect(result.musts).toEqual<MustGroup[]>([
+      { lang: "ko", scopeLabel: "공통", items: ["필수1", "필수2"] },
+      { lang: "ko", scopeLabel: "국가 KR", items: ["국가필수"] },
+      { lang: "ko", scopeLabel: "채널 채널A", items: ["채널필수"] },
+      { lang: "en", scopeLabel: "공통", items: ["EN필수"] },
+      { lang: "ko", scopeLabel: "채널 #55", items: ["미지채널필수"] },
+    ]);
+  });
+
+  it("productExceptions: (productId, lang) 그룹핑, 결측 필드는 null, must 는 content 배열, ban 은 섞이지 않고, productName 은 폴백된다", () => {
+    const channels: StandardChannelInput[] = [
+      { id: 1, name: "채널A", country: "KR", lang: "ko" },
+      { id: 2, name: "채널B", country: "US", lang: "en" },
+    ];
+    const products: StandardProductInput[] = [{ id: 10, name: "제품A" }];
+    const rules: StandardRuleRow[] = [
+      // 채널을 channels 출력에 포함시키기 위한 channel-scope 행(각 채널 1개 이상 필요).
+      standardRow({ id: 1, scope: "channel", ruleType: "persona", content: "채널A 페르소나", lang: "ko", channelId: 1, version: 1 }),
+      standardRow({ id: 2, scope: "channel", ruleType: "persona", content: "채널B 페르소나", lang: "en", channelId: 2, version: 1 }),
+      // productId=10(known), lang=ko
+      standardRow({ id: 400, scope: "product", ruleType: "persona", content: "제품 페르소나", lang: "ko", productId: 10, version: 1 }),
+      standardRow({ id: 401, scope: "product", ruleType: "tone", content: "제품 톤", lang: "ko", productId: 10, version: 1 }),
+      standardRow({ id: 402, scope: "product", ruleType: "must", content: "제품 필수", lang: "ko", productId: 10, version: 1 }),
+      standardRow({ id: 403, scope: "product", ruleType: "ban", content: "제품 금칙(제외되어야)", lang: "ko", productId: 10, severity: "block", version: 1 }),
+      // productId=999(unknown), lang=en — persona 만 있고 나머지는 결측.
+      standardRow({ id: 410, scope: "product", ruleType: "persona", content: "Unknown Persona EN", lang: "en", productId: 999, version: 1 }),
+    ];
+
+    const result = buildBrandStandards({ rules, channels, products });
+
+    expect(result.productExceptions).toEqual<ProductException[]>([
+      {
+        productId: 10,
+        productName: "제품A",
+        lang: "ko",
+        persona: "제품 페르소나",
+        tone: "제품 톤",
+        format: null,
+        must: ["제품 필수"],
+        affectedChannels: ["채널A"],
+      },
+      {
+        productId: 999,
+        productName: "#999",
+        lang: "en",
+        persona: "Unknown Persona EN",
+        tone: null,
+        format: null,
+        must: [],
+        affectedChannels: ["채널B"],
+      },
+    ]);
+
+    // ban 행(id 403)은 productExceptions 가 아니라 bans 에만 나온다.
+    expect(result.bans.map((b) => b.ruleId)).toContain(403);
+    expect(result.productExceptions.flatMap((p) => [p.persona, p.tone, p.format, ...p.must])).not.toContain(
+      "제품 금칙(제외되어야)",
+    );
+  });
+
+  it("순수 함수 — 입력 배열을 변형하지 않고, 같은 입력을 여러 번 호출해도 같은 결과다", () => {
+    const channels: StandardChannelInput[] = [{ id: 1, name: "채널A", country: "KR", lang: "ko" }];
+    const products: StandardProductInput[] = [{ id: 10, name: "제품A" }];
+    const rules: StandardRuleRow[] = [
+      standardRow({ id: 1, scope: "channel", ruleType: "persona", content: "페르소나", lang: "ko", channelId: 1, version: 1, createdAt: D3 }),
+      standardRow({ id: 2, scope: "product", ruleType: "must", content: "필수", lang: "ko", productId: 10, version: 1 }),
+    ];
+    const rulesSnapshot = JSON.parse(JSON.stringify(rules));
+    const channelsSnapshot = JSON.parse(JSON.stringify(channels));
+    const productsSnapshot = JSON.parse(JSON.stringify(products));
+
+    const first = buildBrandStandards({ rules, channels, products });
+    const second = buildBrandStandards({ rules, channels, products });
+
+    expect(first).toEqual(second);
+    expect(JSON.parse(JSON.stringify(rules))).toEqual(rulesSnapshot);
+    expect(JSON.parse(JSON.stringify(channels))).toEqual(channelsSnapshot);
+    expect(JSON.parse(JSON.stringify(products))).toEqual(productsSnapshot);
   });
 });
