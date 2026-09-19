@@ -251,6 +251,8 @@ ChannelFormat {
 
 헤더 `X-Sheet-Secret` 검사. 본문 무시(트리거일 뿐). → `/api/plans/sync` 와 같은 응답.
 
+`SHEET_WEBHOOK_SECRET` 이 미설정(빈 값 포함)이거나 헤더가 없거나 값이 다르면 403 `FORBIDDEN_ROLE` 이고 `details` 는 없다 — 거부 사유는 응답에 싣지 않고 로그에만 남긴다(설정 여부가 밖으로 새지 않게). 비교는 두 값의 sha256 다이제스트를 상수 시간으로 비교한다. 통과하면 FR-001 동기화를 `import_logs.trigger='webhook'` 으로 실행한다.
+
 ### `/api/cost-sheets` · `/api/cost/calc` · `/api/ads` (Should)
 
 ```
@@ -273,7 +275,7 @@ AdPerformanceInput { channelId, periodStart, periodEnd, spend: string, revenue: 
 | 코드 | HTTP | 뜻 | `details` |
 |---|---|---|---|
 | `VALIDATION_ERROR` | 400 | 요청 본문·쿼리가 zod 를 통과 못 함 | zod issues |
-| `FORBIDDEN_ROLE` | 403 | admin 전용 라우트를 editor 가 호출, 또는 크론·웹훅 시크릿 불일치 | `{ required: 'admin' }` |
+| `FORBIDDEN_ROLE` | 403 | admin 전용 라우트를 editor 가 호출, 또는 크론·웹훅 시크릿 불일치 | admin 전용 라우트: `{ required: 'admin' }` · 시크릿 불일치: 없음 |
 | `NOT_FOUND` | 404 | 콘텐츠·계획·채널·원가표가 없음 | `{ resource, id }` |
 | `INVALID_TRANSITION` | 409 | 현재 상태에서 허용되지 않는 액션, 또는 계획에 이미 콘텐츠 연결 | `{ from, action }` |
 | `BLOCKED_TERMS_REMAIN` | 422 | 차단 등급 표현이 남아 검수 요청 불가 | `{ blocks: Finding[] }` |

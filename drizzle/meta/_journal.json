@@ -15,6 +15,13 @@
       "when": 1789448398241,
       "tag": "0001_mushy_shocker",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789829655400,
+      "tag": "0002_early_mauler",
+      "breakpoints": true
     }
   ]
 }

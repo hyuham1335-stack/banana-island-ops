@@ -78,6 +78,7 @@ interface LastSyncRow {
   totalRows: number;
   okRows: number;
   failedRows: number;
+  trigger: "manual" | "webhook";
 }
 
 function createDbMock(opts: { planRows: PlanRow[]; lastSyncRows: LastSyncRow[] }) {
@@ -104,7 +105,7 @@ beforeEach(() => {
 });
 
 describe("listPlans", () => {
-  it("plans·lastSync 를 정확히 매핑한다 — derivePlanStatus 적용, contentId·ownerName 파생, trigger 고정", async () => {
+  it("plans·lastSync 를 정확히 매핑한다 — derivePlanStatus 적용, contentId·ownerName 파생, trigger 는 저장값 그대로", async () => {
     const createdAt = new Date("2026-09-10T00:00:00Z");
     const { db } = createDbMock({
       planRows: [
@@ -143,7 +144,7 @@ describe("listPlans", () => {
           productName: "황금바나나칩",
         },
       ],
-      lastSyncRows: [{ id: 9, createdAt, totalRows: 12, okRows: 10, failedRows: 2 }],
+      lastSyncRows: [{ id: 9, createdAt, totalRows: 12, okRows: 10, failedRows: 2, trigger: "webhook" }],
     });
 
     const result = await listPlans({ db }, "2026-09");
@@ -188,14 +189,14 @@ describe("listPlans", () => {
       },
     ]);
 
-    // trigger 는 DB 에 컬럼이 없다 — 있으면 항상 'manual' 로 고정.
+    // FR-024: trigger 는 import_logs.trigger 컬럼의 저장값을 그대로 돌려준다.
     expect(result.data.lastSync).toEqual({
       id: 9,
       createdAt,
       totalRows: 12,
       okRows: 10,
       failedRows: 2,
-      trigger: "manual",
+      trigger: "webhook",
     });
   });
 
@@ -283,17 +284,22 @@ describe("listPlans", () => {
     }
   });
 
-  it("lastSync 가 있으면 trigger 는 항상 'manual' 이다 (DB 에 저장된 값이 아니라 고정값)", async () => {
-    const { db } = createDbMock({
-      planRows: [],
-      lastSyncRows: [{ id: 1, createdAt: new Date("2026-09-01T00:00:00Z"), totalRows: 0, okRows: 0, failedRows: 0 }],
-    });
+  it.each(["manual", "webhook"] as const)(
+    "저장된 trigger 를 그대로 돌려준다 ('%s' 행 → '%s')",
+    async (trigger) => {
+      const { db } = createDbMock({
+        planRows: [],
+        lastSyncRows: [
+          { id: 1, createdAt: new Date("2026-09-01T00:00:00Z"), totalRows: 0, okRows: 0, failedRows: 0, trigger },
+        ],
+      });
 
-    const result = await listPlans({ db }, "2026-09");
+      const result = await listPlans({ db }, "2026-09");
 
-    expect(result.ok).toBe(true);
-    if (result.ok) expect(result.data.lastSync?.trigger).toBe("manual");
-  });
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.data.lastSync?.trigger).toBe(trigger);
+    },
+  );
 
   it("계획 목록 조회와 lastSync 조회를 Promise.all 로 병렬 실행한다 (하나가 pending 이어도 둘 다 이미 호출됨)", () => {
     const pendingNode = makePendingChainNode();

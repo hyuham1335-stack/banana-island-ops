@@ -110,7 +110,7 @@ flowchart LR
 | 원가항목 | `cost_items` | `cost_sheet_id` FK, `stage` enum(`ph`,`kr`,`us`), `cost_kind`, `amount`, `currency`, `basis` enum(`per_unit`,`per_batch`), `batch_qty`, `note` | — |
 | 원가계산결과 | `cost_calc_results` | `cost_sheet_id` FK, `channel_id` FK, `fx_php`, `fx_usd`, `unit_cost_krw`, `price_krw`, `margin_rate`, `fixed_cost_krw`, `bep_qty`, `kind` enum(`actual`,`simulation`), `calculated_at` | — |
 | 광고성과 | `ad_performance` | `channel_id` FK, `product_id` FK nullable, `content_id` FK nullable, `import_id` FK, `period_start`, `period_end`, `spend`, `revenue`, `orders`, `currency`, `input_source` enum(`csv`,`manual`,`sheet`,`api`) | UK `(channel_id, period_start, period_end)` |
-| 가져오기이력 | `import_logs` | `executed_by` FK nullable, `target` enum(`ad_performance`,`content_performance`,`cost_items`,`publish_plans`), `input_source` enum, `source_ref`, `total_rows`, `ok_rows`, `failed_rows`, `errors` jsonb | idx `(target, created_at desc)` |
+| 가져오기이력 | `import_logs` | `executed_by` FK nullable, `target` enum(`ad_performance`,`content_performance`,`cost_items`,`publish_plans`), `input_source` enum, `source_ref`, `total_rows`, `ok_rows`, `failed_rows`, `errors` jsonb, `trigger` enum(`manual`,`webhook`) NOT NULL DEFAULT `manual` — ERD v7 에 없는 추가 컬럼(FR-024, 웹훅 동기화 구분) | idx `(target, created_at desc)` |
 
 모든 테이블에 `created_at timestamptz default now()`.
 

@@ -75,6 +75,7 @@ export const importTargetEnum = pgEnum("import_target", [
   "cost_items",
   "publish_plans",
 ]);
+export const importTriggerEnum = pgEnum("import_trigger", ["manual", "webhook"]);
 
 // ---- 뿌리 테이블 ---------------------------------------------------------------
 
@@ -131,6 +132,7 @@ export const importLogs = pgTable(
     okRows: integer("ok_rows").notNull().default(0),
     failedRows: integer("failed_rows").notNull().default(0),
     errors: jsonb("errors"),
+    trigger: importTriggerEnum("trigger").notNull().default("manual"),
     createdAt: createdAt(),
   },
   (t) => [index("import_logs_target_created_idx").on(t.target, t.createdAt.desc())],
