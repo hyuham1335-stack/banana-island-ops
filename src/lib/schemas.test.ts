@@ -2,13 +2,18 @@ import { describe, expect, it } from "vitest";
 import {
   ApproveInputSchema,
   ContentListQuerySchema,
+  CostItemInputSchema,
+  CostSheetListQuerySchema,
+  CreateCostSheetInputSchema,
   EditContentInputSchema,
   FrankfurterLatestSchema,
   FxQuerySchema,
+  MAX_COST_ITEMS,
   ManualFxInputSchema,
   RejectInputSchema,
   SetRoleInputSchema,
   SheetPlanRowSchema,
+  UpdateCostSheetInputSchema,
   parseSheetRow,
 } from "./schemas";
 
@@ -450,5 +455,192 @@ describe("FrankfurterLatestSchema", () => {
     expect(FrankfurterLatestSchema.safeParse({ ...VALID, rates: { ...VALID.rates, PHP: 0 } }).success).toBe(
       false,
     );
+  });
+});
+
+// -----------------------------------------------------------------------------
+// FR-020(런 20260920-0107-4265) 「유닛 · lib/schemas.ts」
+// -----------------------------------------------------------------------------
+
+const VALID_COST_ITEM = {
+  stage: "ph" as const,
+  costKind: "원료",
+  amount: "1200.5",
+  currency: "PHP" as const,
+  basis: "per_unit" as const,
+  batchQty: null,
+};
+
+describe("CostItemInputSchema", () => {
+  it("유효한 per_unit 항목은 통과한다", () => {
+    expect(CostItemInputSchema.safeParse(VALID_COST_ITEM).success).toBe(true);
+  });
+
+  it("유효한 per_batch 항목(batchQty 양의 정수)은 통과한다", () => {
+    expect(
+      CostItemInputSchema.safeParse({ ...VALID_COST_ITEM, basis: "per_batch", batchQty: 10 }).success,
+    ).toBe(true);
+  });
+
+  it("stage 가 enum 밖이면 거부한다", () => {
+    expect(CostItemInputSchema.safeParse({ ...VALID_COST_ITEM, stage: "cn" }).success).toBe(false);
+  });
+
+  it("currency 가 enum 밖이면 거부한다", () => {
+    expect(CostItemInputSchema.safeParse({ ...VALID_COST_ITEM, currency: "EUR" }).success).toBe(false);
+  });
+
+  it("costKind 가 빈 문자열이면 거부한다", () => {
+    expect(CostItemInputSchema.safeParse({ ...VALID_COST_ITEM, costKind: "" }).success).toBe(false);
+  });
+
+  it("costKind 가 공백만 있으면 거부한다(trim 후 빈 문자열)", () => {
+    expect(CostItemInputSchema.safeParse({ ...VALID_COST_ITEM, costKind: "   " }).success).toBe(false);
+  });
+
+  it.each([
+    ["음수", "-100"],
+    ["숫자가 아님", "abc"],
+    ["소수 5자리", "1.12345"],
+    ["정수 11자리", "12345678901"],
+  ])("amount 형식 위반(%s)이면 거부한다", (_label, amount) => {
+    expect(CostItemInputSchema.safeParse({ ...VALID_COST_ITEM, amount }).success).toBe(false);
+  });
+
+  it("amount 정수 10자리 + 소수 4자리는 통과한다(경계값)", () => {
+    expect(CostItemInputSchema.safeParse({ ...VALID_COST_ITEM, amount: "1234567890.1234" }).success).toBe(
+      true,
+    );
+  });
+
+  it("basis 가 enum 밖이면 거부한다", () => {
+    expect(CostItemInputSchema.safeParse({ ...VALID_COST_ITEM, basis: "per_hour" }).success).toBe(false);
+  });
+
+  it("basis 가 per_batch 인데 batchQty 가 null 이면 거부한다", () => {
+    expect(
+      CostItemInputSchema.safeParse({ ...VALID_COST_ITEM, basis: "per_batch", batchQty: null }).success,
+    ).toBe(false);
+  });
+
+  it("basis 가 per_unit 인데 batchQty 가 null 이 아니면 거부한다", () => {
+    expect(
+      CostItemInputSchema.safeParse({ ...VALID_COST_ITEM, basis: "per_unit", batchQty: 1 }).success,
+    ).toBe(false);
+  });
+
+  it("batchQty 가 정수가 아니면 거부한다", () => {
+    expect(
+      CostItemInputSchema.safeParse({ ...VALID_COST_ITEM, basis: "per_batch", batchQty: 1.5 }).success,
+    ).toBe(false);
+  });
+
+  it("batchQty 가 0 이하이면 거부한다", () => {
+    expect(
+      CostItemInputSchema.safeParse({ ...VALID_COST_ITEM, basis: "per_batch", batchQty: 0 }).success,
+    ).toBe(false);
+  });
+});
+
+const VALID_CREATE_COST_SHEET = {
+  productId: 1,
+  distributionRoute: "kr_domestic" as const,
+  name: "2026 하반기 v1",
+};
+
+describe("CreateCostSheetInputSchema", () => {
+  it("cloneFromId 없이 유효한 입력은 통과한다", () => {
+    expect(CreateCostSheetInputSchema.safeParse(VALID_CREATE_COST_SHEET).success).toBe(true);
+  });
+
+  it("cloneFromId 가 있어도(양의 정수) 통과한다", () => {
+    expect(
+      CreateCostSheetInputSchema.safeParse({ ...VALID_CREATE_COST_SHEET, cloneFromId: 5 }).success,
+    ).toBe(true);
+  });
+
+  it.each([
+    ["0", 0],
+    ["음수", -1],
+    ["정수가 아님", 1.5],
+  ])("productId 가 양의 정수가 아니면(%s) 거부한다", (_label, productId) => {
+    expect(CreateCostSheetInputSchema.safeParse({ ...VALID_CREATE_COST_SHEET, productId }).success).toBe(
+      false,
+    );
+  });
+
+  it("distributionRoute 가 enum 밖이면 거부한다", () => {
+    expect(
+      CreateCostSheetInputSchema.safeParse({ ...VALID_CREATE_COST_SHEET, distributionRoute: "jp_export" })
+        .success,
+    ).toBe(false);
+  });
+
+  it("name 이 빈 문자열이면 거부한다", () => {
+    expect(CreateCostSheetInputSchema.safeParse({ ...VALID_CREATE_COST_SHEET, name: "" }).success).toBe(
+      false,
+    );
+  });
+
+  it("name 이 101자면 거부한다", () => {
+    expect(
+      CreateCostSheetInputSchema.safeParse({ ...VALID_CREATE_COST_SHEET, name: "가".repeat(101) }).success,
+    ).toBe(false);
+  });
+
+  it("cloneFromId 가 0 이하이면 거부한다", () => {
+    expect(
+      CreateCostSheetInputSchema.safeParse({ ...VALID_CREATE_COST_SHEET, cloneFromId: 0 }).success,
+    ).toBe(false);
+  });
+});
+
+describe("UpdateCostSheetInputSchema", () => {
+  it("items 0개는 통과한다(상한만 있고 하한 없음)", () => {
+    expect(UpdateCostSheetInputSchema.safeParse({ items: [] }).success).toBe(true);
+  });
+
+  it(`items 가 ${MAX_COST_ITEMS}개면 통과한다(경계값)`, () => {
+    const items = Array.from({ length: MAX_COST_ITEMS }, () => VALID_COST_ITEM);
+    expect(UpdateCostSheetInputSchema.safeParse({ items }).success).toBe(true);
+  });
+
+  it(`items 가 ${MAX_COST_ITEMS + 1}개면 거부한다`, () => {
+    const items = Array.from({ length: MAX_COST_ITEMS + 1 }, () => VALID_COST_ITEM);
+    expect(UpdateCostSheetInputSchema.safeParse({ items }).success).toBe(false);
+  });
+
+  it("name 은 선택값 — 생략해도 통과한다", () => {
+    expect(UpdateCostSheetInputSchema.safeParse({ items: [] }).success).toBe(true);
+  });
+
+  it("name 이 있으면 1~100자 검증을 받는다(빈 문자열 거부)", () => {
+    expect(UpdateCostSheetInputSchema.safeParse({ name: "", items: [] }).success).toBe(false);
+  });
+
+  it("items 안의 항목 하나라도 무효면 전체를 거부한다", () => {
+    expect(
+      UpdateCostSheetInputSchema.safeParse({ items: [{ ...VALID_COST_ITEM, stage: "cn" }] }).success,
+    ).toBe(false);
+  });
+});
+
+describe("CostSheetListQuerySchema", () => {
+  it("productId 문자열을 숫자로 coerce 한다", () => {
+    const result = CostSheetListQuerySchema.safeParse({ productId: "5" });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.productId).toBe(5);
+  });
+
+  it("productId·distributionRoute 둘 다 생략하면 통과한다", () => {
+    expect(CostSheetListQuerySchema.safeParse({}).success).toBe(true);
+  });
+
+  it("distributionRoute 가 잘못된 값이면 거부한다", () => {
+    expect(CostSheetListQuerySchema.safeParse({ distributionRoute: "jp_export" }).success).toBe(false);
+  });
+
+  it("productId 가 양의 정수가 아니면(문자열 '0') 거부한다", () => {
+    expect(CostSheetListQuerySchema.safeParse({ productId: "0" }).success).toBe(false);
   });
 });
