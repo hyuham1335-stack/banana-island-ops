@@ -31,7 +31,7 @@ flowchart TD
     src --> lib["lib/"]
     src --> types["types/"]
 
-    app --> pages["(pages) — page.tsx 9개<br/>/ · /write · /plans · /contents · /ads · /perf · /cost · /costsheet · /std"]
+    app --> pages["(pages) — page.tsx 9개<br/>/ · /write · /plans · /contents · /ads · /perf · /cost · /costsheet · /rules"]
     app --> api["api/**/route.ts — API_SPEC 의 진입점<br/>role · products · channels · rules/resolve · plans · plans/sync · plans/webhook<br/>contents · contents/titles · contents/[id] · contents/[id]/{regenerate,submit,cancel-review,approve,reject,publish,new-version}<br/>fx · fx/refresh · cost-sheets · cost/calc · ads"]
     app --> layout["layout.tsx · globals.css — 토큰 · 상단바 · 내비"]
 

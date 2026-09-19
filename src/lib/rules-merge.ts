@@ -61,9 +61,9 @@ function pickSingle(rows: BrandRuleRow[], ruleType: RuleType): BrandRuleRow | nu
 }
 
 /** id 기준 중복 제거 — 배열의 첫 등장 순서를 유지한다. */
-function dedupeById(rows: BrandRuleRow[]): BrandRuleRow[] {
+function dedupeById<T extends { id: number }>(rows: T[]): T[] {
   const seen = new Set<number>();
-  const result: BrandRuleRow[] = [];
+  const result: T[] = [];
   for (const row of rows) {
     if (seen.has(row.id)) continue;
     seen.add(row.id);
@@ -107,5 +107,226 @@ export function mergeRules(rows: BrandRuleRow[]): ResolvedRules {
       reason: row.reason,
       legalBasis: row.legalBasis,
     })),
+  };
+}
+
+// ---- FR-025 브랜드 기준 화면 --------------------------------------------------
+
+/** brand_rules 행 형태(화면용) — resolveRules 의 BrandRuleRow 에 scope 분기 필드를 더한 것. */
+export interface StandardRuleRow extends BrandRuleRow {
+  lang: "ko" | "en";
+  country: string | null;
+  channelId: number | null;
+  productId: number | null;
+  createdAt: Date;
+}
+
+export interface StandardChannelInput {
+  id: number;
+  name: string;
+  country: string;
+  lang: "ko" | "en";
+}
+
+export interface StandardProductInput {
+  id: number;
+  name: string;
+}
+
+export interface ChannelStandard {
+  channelId: number;
+  name: string;
+  lang: "ko" | "en";
+  persona: string;
+  tone: string;
+  format: string;
+  version: string;
+  updatedAt: Date | null;
+}
+
+export interface BanStandard {
+  ruleId: number;
+  label: string;
+  severity: Severity;
+  alternative: string | null;
+  reason: string | null;
+  legalBasis: string | null;
+  lang: "ko" | "en";
+  scopeLabel: string;
+}
+
+export interface MustGroup {
+  lang: "ko" | "en";
+  scopeLabel: string;
+  items: string[];
+}
+
+export interface ProductException {
+  productId: number;
+  productName: string;
+  lang: "ko" | "en";
+  persona: string | null;
+  tone: string | null;
+  format: string | null;
+  must: string[];
+  affectedChannels: string[];
+}
+
+export interface BrandStandards {
+  isEmpty: boolean;
+  channels: ChannelStandard[];
+  bans: BanStandard[];
+  musts: MustGroup[];
+  productExceptions: ProductException[];
+}
+
+function scopeLabel(
+  row: Pick<StandardRuleRow, "scope" | "country" | "channelId" | "productId">,
+  channels: StandardChannelInput[],
+  products: StandardProductInput[],
+): string {
+  switch (row.scope) {
+    case "common":
+      return "공통";
+    case "country":
+      return `국가 ${row.country}`;
+    case "channel": {
+      const channel = channels.find((ch) => ch.id === row.channelId);
+      return `채널 ${channel ? channel.name : `#${row.channelId}`}`;
+    }
+    case "product": {
+      const product = products.find((p) => p.id === row.productId);
+      return `제품 ${product ? product.name : `#${row.productId}`}`;
+    }
+  }
+}
+
+export function buildBrandStandards(input: {
+  rules: StandardRuleRow[];
+  channels: StandardChannelInput[];
+  products: StandardProductInput[];
+}): BrandStandards {
+  const { rules, channels, products } = input;
+
+  if (rules.length === 0) {
+    return { isEmpty: true, channels: [], bans: [], musts: [], productExceptions: [] };
+  }
+
+  // ---- channels --------------------------------------------------------
+  const channelsWithRule = channels
+    .filter((ch) => rules.some((row) => row.scope === "channel" && row.channelId === ch.id))
+    .sort((a, b) => a.id - b.id);
+
+  const channelStandards: ChannelStandard[] = channelsWithRule.map((ch) => {
+    const applicable = rules.filter(
+      (row) =>
+        row.lang === ch.lang &&
+        (row.scope === "common" ||
+          (row.scope === "country" && row.country === ch.country) ||
+          (row.scope === "channel" && row.channelId === ch.id)),
+    );
+    const merged = mergeRules(applicable);
+    const appliedRows = applicable.filter((row) => merged.appliedRuleIds.includes(row.id));
+    const updatedAt =
+      appliedRows.length === 0
+        ? null
+        : appliedRows.reduce<Date>(
+            (max, row) => (row.createdAt > max ? row.createdAt : max),
+            appliedRows[0].createdAt,
+          );
+    return {
+      channelId: ch.id,
+      name: ch.name,
+      lang: ch.lang,
+      persona: merged.persona,
+      tone: merged.tone,
+      format: merged.format,
+      version: merged.version,
+      updatedAt,
+    };
+  });
+
+  // ---- bans --------------------------------------------------------------
+  const banRows = dedupeById(rules.filter((row) => row.ruleType === "ban"));
+  const bans: BanStandard[] = banRows.map((row) => ({
+    ruleId: row.id,
+    label: row.content,
+    severity: row.severity ?? "block",
+    alternative: row.alternative,
+    reason: row.reason,
+    legalBasis: row.legalBasis,
+    lang: row.lang,
+    scopeLabel: scopeLabel(row, channels, products),
+  }));
+
+  // ---- musts (non-product scope) -----------------------------------------
+  const mustRowsAll = rules.filter(
+    (row) => row.ruleType === "must" && (row.scope === "common" || row.scope === "country" || row.scope === "channel"),
+  );
+  const mustGroupOrder: string[] = [];
+  const mustGroupMap = new Map<string, { lang: "ko" | "en"; scopeLabel: string; rows: StandardRuleRow[] }>();
+  for (const row of mustRowsAll) {
+    const label = scopeLabel(row, channels, products);
+    const key = `${row.lang}\u0000${label}`;
+    let group = mustGroupMap.get(key);
+    if (!group) {
+      group = { lang: row.lang, scopeLabel: label, rows: [] };
+      mustGroupMap.set(key, group);
+      mustGroupOrder.push(key);
+    }
+    group.rows.push(row);
+  }
+  const musts: MustGroup[] = mustGroupOrder.map((key) => {
+    const group = mustGroupMap.get(key)!;
+    const items = dedupeById(group.rows).map((row) => row.content);
+    return { lang: group.lang, scopeLabel: group.scopeLabel, items };
+  });
+
+  // ---- productExceptions --------------------------------------------------
+  const productRows = rules.filter((row) => row.scope === "product");
+  const productGroupOrder: string[] = [];
+  const productGroupMap = new Map<
+    string,
+    { productId: number; lang: "ko" | "en"; rows: StandardRuleRow[] }
+  >();
+  for (const row of productRows) {
+    const key = `${row.productId}\u0000${row.lang}`;
+    let group = productGroupMap.get(key);
+    if (!group) {
+      group = { productId: row.productId!, lang: row.lang, rows: [] };
+      productGroupMap.set(key, group);
+      productGroupOrder.push(key);
+    }
+    group.rows.push(row);
+  }
+  const channelNamesByLang = new Map<"ko" | "en", string[]>();
+  for (const ch of channelStandards) {
+    const list = channelNamesByLang.get(ch.lang) ?? [];
+    list.push(ch.name);
+    channelNamesByLang.set(ch.lang, list);
+  }
+  const productExceptions: ProductException[] = productGroupOrder.map((key) => {
+    const group = productGroupMap.get(key)!;
+    const product = products.find((p) => p.id === group.productId);
+    const findFirst = (ruleType: RuleType) => group.rows.find((row) => row.ruleType === ruleType)?.content ?? null;
+    const mustItems = dedupeById(group.rows.filter((row) => row.ruleType === "must")).map((row) => row.content);
+    return {
+      productId: group.productId,
+      productName: product ? product.name : `#${group.productId}`,
+      lang: group.lang,
+      persona: findFirst("persona"),
+      tone: findFirst("tone"),
+      format: findFirst("format"),
+      must: mustItems,
+      affectedChannels: channelNamesByLang.get(group.lang) ?? [],
+    };
+  });
+
+  return {
+    isEmpty: false,
+    channels: channelStandards,
+    bans,
+    musts,
+    productExceptions,
   };
 }
