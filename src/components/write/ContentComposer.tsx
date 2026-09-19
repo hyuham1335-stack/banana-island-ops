@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { Panel } from "@/components/ui/Panel";
 import { Chip } from "@/components/ui/Chip";
 import { Button } from "@/components/ui/Button";
@@ -370,13 +371,16 @@ export function ContentComposer({
 
           <AutoBox channelId={channelId} productId={productId} lang={lang} onResolved={handleResolved} />
 
-          {initialContent === null ? (
-            <div className="btn-row">
+          <div className="btn-row">
+            {initialContent === null ? (
               <Button onClick={requestTitles} disabled={gen.phase === "titles-loading"}>
                 제목 추천 받기
               </Button>
-            </div>
-          ) : null}
+            ) : null}
+            <Link href="/rules" className="btn ghost">
+              기준 자료 보기
+            </Link>
+          </div>
         </Panel>
 
         <GenPanel
