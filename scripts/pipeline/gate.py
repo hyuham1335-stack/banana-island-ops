@@ -21,6 +21,7 @@ import harness  # noqa: E402
 import adapters  # noqa: E402
 import attribution as attr  # noqa: E402
 import contract as contract_mod  # noqa: E402
+import report as rep  # noqa: E402
 import state as st  # noqa: E402
 
 # 등급 어휘의 단일 출처는 `state.GRADES` 다. 여기서 문자열을 다시 적으면
@@ -125,7 +126,8 @@ def run_gate(root, config, adapter, calibration, state, phase_front,
 
     report["failed"] = loop_failed
     report["symbols"] = sorted(symbols)
-    report["grade"] = GRADE_PASS if (not gaps and loop_failed is None) else (
+    demoting = [g for g in gaps if not rep.is_non_demoting(g)]
+    report["grade"] = GRADE_PASS if (not demoting and loop_failed is None) else (
         GRADE_GAPS if loop_failed is None else None)
     report["gaps"] = gaps
     return report
@@ -227,7 +229,16 @@ def _tests_signal(root, adapter, calibration, results, report_root):
         return None                     # 안 돌았다. **0 을 만들지 않는다**
 
     got = adapters.parse_report(root, adapter, report_root)
-    floor = adapters.derived(calibration, "tests_ran_floor")
+    sig = _tests_count(got, adapters.derived(calibration, "tests_ran_floor"))
+    if got.get("matched"):
+        # 파일별 케이스 수 — 06 PR 본문의 검증 표가 읽는다 (ADR-H058 추기).
+        # full 을 파싱하는 자리가 여기뿐이라 여기서 남긴다. 06 이 리포트를 다시
+        # 읽으면 그 사이 scoped 가 덮어쓴 XML 을 full 의 실적으로 적는다.
+        sig["by_file"] = got.get("by_file")
+    return sig
+
+
+def _tests_count(got, floor):
     if not got.get("matched"):
         return {"ran": None, "expected_min": floor, "status": "none",
                 "source": "report_glob",
@@ -297,4 +308,8 @@ def attribute(root, config, adapter, report, state, replay=None, log_text="",
     # **쌍이다.** `sig_chain` 은 `owner|sig` 를 쌓는다 — 시그니처만 세면 flip 이
     # 값을 낼 바로 그 라운드에 정체 감지가 먼저 멈춘다 (M33).
     prev = (state or {}).get("sig_chain") or []
-    return attr.dispatch(failures, config, prev, flip, stuck_after=stuck_after)
+    # 사다리는 03 이 실제로 부른 역할로만 만든다 (ADR-H057).
+    roles = (((state or {}).get("phases") or {}).get("03-implement") or {}).get(
+        "dispatched_roles")
+    return attr.dispatch(failures, config, prev, flip, stuck_after=stuck_after,
+                         roles=roles)

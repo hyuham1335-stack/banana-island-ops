@@ -168,6 +168,13 @@ class BrokenConfigRejectedTest(DoctorTestBase):
         self.save_config(cfg)
         self.assertRejected(self.doctor(), "## 존재하지않는절")
 
+    def test_2b_role_condition_names_an_unknown_section(self):
+        """조건부 역할이 없는 절을 가리키면 그 역할은 조용히 영영 미호출이다 (ADR-H057)."""
+        cfg = self.config()
+        next(r for r in cfg["roles"] if r["id"] == "ui")["when_contract_section"] = "screenz"
+        self.save_config(cfg)
+        self.assertRejected(self.doctor(), "screenz")
+
     def test_3_runner_bin_not_whitelisted(self):
         ad = self.adapter()
         ad["runner"]["bin"] = "sh"
@@ -430,7 +437,8 @@ class TemplateDocsAreNotDanglingTest(unittest.TestCase):
     """
 
     #: 참조를 캐낼 파일들. 산문이 아니라 **경로를 지시로 쓰는** 자리만 본다.
-    SOURCES = ("README.md", "CLAUDE.md", ".claude/commands/feature.md")
+    SOURCES = ("README.md", "CLAUDE.md", ".claude/commands/feature.md",
+               ".claude/commands/log.md")
 
     #: `docs/…` 형태의 마크다운 경로. 백틱 안팎을 모두 잡되 확장자로 좁힌다.
     PATTERN = re.compile(r"/?(docs/[A-Za-z0-9_\-./]+\.md)")
@@ -576,6 +584,40 @@ JUNIT_FIXTURE = """<?xml version="1.0" encoding="UTF-8" ?>
 """
 
 
+class JunitByFileTest(unittest.TestCase):
+    """파일별 케이스 수 — PR 본문의 「무엇이 검증됐나」 표가 읽는다 (ADR-H058 추기)."""
+
+    ADAPTER = {"test_report": {"format": "junit-xml", "glob": ["reports/*.xml"]}}
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def parse(self, xml=None):
+        if xml is not None:
+            _write(self.root / "reports" / "r.xml", xml)
+        return harness.parse_test_report(self.root, self.ADAPTER)
+
+    def test_file_속성이_먼저고_없으면_classname(self):
+        got = self.parse(
+            '<testsuites tests="3"><testsuite tests="3">'
+            '<testcase file="src/lib/match.test.ts" classname="x" name="a"/>'
+            '<testcase file="src/lib/match.test.ts" classname="x" name="b"/>'
+            '<testcase classname="src\\app\\api\\route.test.ts" name="c"/>'
+            '</testsuite></testsuites>')
+        self.assertEqual({"src/lib/match.test.ts": 2, "src/app/api/route.test.ts": 1},
+                         got["by_file"])
+
+    def test_케이스가_없으면_빈_dict(self):
+        self.assertEqual({}, self.parse(JUNIT_FIXTURE)["by_file"])
+
+    def test_리포트가_없으면_None(self):
+        self.assertIsNone(self.parse()["by_file"])
+
+
 class VerifyAdapterTest(DoctorTestBase):
     """[[ADR-H047]] 결정 3 — 어댑터 `verified` 는 완주 런 수로 올린다.
 
@@ -699,6 +741,14 @@ class CalibrateTest(DoctorTestBase):
         ran = set(stage for stage, _ in runner.calls)
         self.assertNotIn("e2e", ran)
         self.assertNotIn("docs", ran)
+
+    def test_not_applicable_stage_is_na_not_absent(self):
+        """구조적으로 없는 스테이지(`not_applicable`)는 부재와 다른 칸이다 (ADR-H047 추기)."""
+        harness.run_calibrate(self.root, runner=self.fake_runner())
+        stages = self.load()["stages"]
+        self.assertEqual("na", stages["docs"]["state"])
+        self.assertIn("문서 빌드", stages["docs"]["reason"])
+        self.assertEqual("absent", stages["e2e"]["state"])
 
     def test_scoped_is_skipped_without_select(self):
         harness.run_calibrate(self.root, runner=self.fake_runner())
@@ -1026,6 +1076,35 @@ class RetryBudgetTest(unittest.TestCase):
 
     def test_derive_without_retry_input_keeps_the_key_null(self):
         self.assertIsNone(harness._derive_policy({}, {})["retry_budget"])
+
+
+class ProfileParityTest(unittest.TestCase):
+    """프로필 시드가 템플릿 config 의 키를 빠뜨리면 클론에서 그 기능이 조용히
+    꺼진다 — `reviewers` 가 없어 05 가 통째로 비활성이던 결함이다 (ADR-H063)."""
+
+    def _load(self, rel):
+        return json.loads((ROOT / rel).read_text(encoding="utf-8"))
+
+    def test_profiles_declare_every_template_key(self):
+        tmpl = {k for k in self._load("harness/config.json") if not k.startswith("_")}
+        for prof in sorted((ROOT / "harness" / "profiles").glob("*/config.json")):
+            got = {k for k in json.loads(prof.read_text(encoding="utf-8"))
+                   if not k.startswith("_")}
+            self.assertEqual(tmpl, got, prof)
+
+    def test_profiles_carry_the_template_review_blocks(self):
+        tmpl = self._load("harness/config.json")
+        prof = self._load("harness/profiles/nextjs-ts/config.json")
+        for key in ("reviewers", "review"):
+            self.assertEqual(tmpl[key], prof[key], key)
+
+    def test_schema_requires_the_review_blocks(self):
+        schema = self._load("harness/config.schema.json")
+        for key in ("reviewers", "review"):
+            self.assertIn(key, schema["required"])
+        prof = self._load("harness/profiles/nextjs-ts/config.json")
+        prof["project"]["name"] = "fixture"  # `{{name}}` 은 init 이 채운다
+        self.assertEqual([], harness.validate(prof, schema))
 
 
 class RealRepoTest(unittest.TestCase):

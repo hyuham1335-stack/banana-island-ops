@@ -6,6 +6,9 @@
     "instruction_file": "CLAUDE.md",
     "instruction_slot_budget": 12,
     "rules_dir": "docs",
+    "instruction_review": {
+      "skill": "claude-md-management:revise-claude-md"
+    },
     "secret_files": [
       ".env.local",
       ".env"
@@ -20,7 +23,9 @@
       "errors": "## 오류 어휘",
       "data_shapes": "## 데이터 형태",
       "schema": "## 스키마·데이터 변경",
-      "boundaries": "## 외부 경계"
+      "boundaries": "## 외부 경계",
+      "journeys": "## 여정",
+      "screens": "## 화면"
     },
     "required": [
       "units"
@@ -42,7 +47,6 @@
       "code": "impl",
       "owns": [
         "src/app/**",
-        "src/components/**",
         "src/lib/**",
         "src/services/**",
         "src/types/**",
@@ -51,7 +55,8 @@
       "excludes": [
         "**/*.test.ts",
         "**/*.test.tsx",
-        "**/*.golden.test.ts"
+        "**/*.golden.test.ts",
+        "src/app/**/*.tsx"
       ]
     },
     {
@@ -61,8 +66,23 @@
       "owns": [
         "src/**/*.test.ts",
         "src/**/*.test.tsx",
-        "src/**/*.golden.test.ts"
+        "src/**/*.golden.test.ts",
+        "e2e/**"
       ]
+    },
+    {
+      "id": "ui",
+      "agent": "ui-writer",
+      "code": "ui",
+      "owns": [
+        "src/components/**",
+        "src/app/**/*.tsx"
+      ],
+      "excludes": [
+        "src/app/api/**",
+        "**/*.test.tsx"
+      ],
+      "when_contract_section": "screens"
     }
   ],
   "primary_role": "impl",
@@ -85,9 +105,12 @@
     "required": false,
     "primary": "mcp__plan-review__review_plan",
     "fallback": "plan-reviewer",
-    "secondary": {"provider": "openai", "status": "not_configured"}
+    "secondary": {
+      "provider": "openai",
+      "status": "not_configured"
+    }
   },
-  "_reviewers_note": "when glob 이 변경 파일에 걸리면 그 리뷰어가 켜진다. when_role_owned 가 참이면 glob 대신 roles[].owns 가 소유한 파일이 바뀌었을 때 켜진다 — gen 이 그렇고, 소스 변경이 있으면 항상 켜지는 것이 07 생략의 근거다 (ADR-H043). 우선순위는 배열 순서다. skill 은 .claude/skills/{skill}/SKILL.md 를 가리키고, doctor 와 lint-phases 가 기동 전에 실재를 확인한다. roles[].agent 와 겹치면 거부한다 — 작성자가 자기 코드를 리뷰한 것은 독립 관측이 아니다.",
+  "_reviewers_note": "when glob 이 변경 파일에 걸리면 그 리뷰어가 켜진다. when_role_owned 가 참이면 glob 대신 roles[].owns 가 소유한 파일이 바뀌었을 때 켜진다 — gen 이 그렇고, 소스 변경이 있으면 항상 켜지는 것이 07 생략의 근거다 (ADR-H043). 우선순위는 배열 순서다 — test 가 arch 앞이다 (ADR-H062). risk 는 선택 키로, 그 리뷰어가 매칭되면 함의되는 위험(01 INTENT risk 어휘)이다 — 05 가 신고와 대조해 risk_undeclared 를 관측으로만 남긴다 (ADR-H067). skill 은 .claude/skills/{skill}/SKILL.md 를 가리키고, doctor 와 lint-phases 가 기동 전에 실재를 확인한다. roles[].agent 와 겹치면 거부한다 — 작성자가 자기 코드를 리뷰한 것은 독립 관측이 아니다.",
   "reviewers": [
     {
       "code": "gen",
@@ -99,6 +122,10 @@
       "code": "data",
       "skill": "data-layer-reviewer",
       "priority": 1,
+      "risk": [
+        "schema",
+        "boundary"
+      ],
       "when": [
         "src/lib/schemas.*",
         "src/services/**",
@@ -109,6 +136,10 @@
       "code": "sec",
       "skill": "security-reviewer",
       "priority": 2,
+      "risk": [
+        "authz",
+        "boundary"
+      ],
       "when": [
         "src/app/api/**",
         "src/lib/env.*",
@@ -118,25 +149,26 @@
       ]
     },
     {
+      "code": "test",
+      "skill": "test-quality-reviewer",
+      "priority": 3,
+      "when": [
+        "src/**/*.test.ts",
+        "src/**/*.test.tsx",
+        "src/**/*.golden.test.ts",
+        "e2e/**"
+      ]
+    },
+    {
       "code": "arch",
       "skill": "architecture-reviewer",
-      "priority": 3,
+      "priority": 4,
       "when": [
         "src/app/**",
         "src/components/**",
         "src/lib/**",
         "src/services/**",
         "src/types/**"
-      ]
-    },
-    {
-      "code": "test",
-      "skill": "test-quality-reviewer",
-      "priority": 4,
-      "when": [
-        "src/**/*.test.ts",
-        "src/**/*.test.tsx",
-        "src/**/*.golden.test.ts"
       ]
     },
     {
@@ -155,8 +187,15 @@
     "merge_below_diff_lines": 150,
     "profile_caps": {
       "docs": 1,
+      "fix": 1,
       "small": 2,
       "normal": 4
+    },
+    "depth": {
+      "docs": "diff",
+      "fix": "diff",
+      "small": "diff",
+      "normal": "diff+refs"
     },
     "findings_max": 50,
     "inline_max": {
@@ -165,14 +204,14 @@
     },
     "baseline_runs": 3
   },
-  "_external_pr_review_note": "poll_sec 와 timeout_sec 는 미검증 상속값이다 — 명세가 키 이름만 정하고 기본값을 주지 않으며 캘리브레이션 대상도 아니다. enabled:false 면 external.status 가 disabled 가 되고 그것은 gap 이 아니다 — config 로 뺀 관측기이고, 일반 정합성은 05 의 gen 이 본다 (ADR-H043). 07 의 내장 리뷰는 05 가 ok 가 아니거나, 04·05 에서 수리가 있었거나, Major 가 남았거나, 감사 런일 때 돈다. 봇을 켜 놓고 무응답(timeout · not_a_review)이면 그것은 있어야 할 관측기가 없는 것이라 gap 이다.",
+  "_external_pr_review_note": "poll_sec 와 timeout_sec 는 미검증 상속값이다 — 명세가 키 이름만 정하고 기본값을 주지 않으며 캘리브레이션 대상도 아니다. enabled:false 면 external.status 가 disabled 가 되고 그것은 gap 이 아니다 — config 로 뺀 관측기이고, 일반 정합성은 05 의 gen 이 본다 (ADR-H043). 07 의 내장 리뷰는 05 가 ok 가 아니거나, 트리아지 예측이 빗나갔거나, 05 의 지적이 0건이거나, 감사 런일 때 돈다 — Major 잔여·수리 유무는 트리거가 아니다 (ADR-H059). 봇을 켜 놓고 무응답(timeout · not_a_review)이면 그것은 있어야 할 관측기가 없는 것이라 gap 이다.",
   "external_pr_review": {
     "enabled": false,
     "bot_logins": [],
     "poll_sec": 30,
     "timeout_sec": 300
   },
-  "_budget_note": "lines_max 는 템플릿에서 400→1000 으로 올랐다(ADR-H045, exit 9 반복 마찰). 이 프로젝트는 그 이후 실측 마찰로 1000→1500 까지 한 단계 더 올려 유지한다 — 템플릿보다 앞서 있는 값이라 되돌리지 않는다. files_max(10)·model_calls_max(24)는 안 건드렸다.",
+  "_budget_note": "lines_max 는 템플릿에서 400→1000 으로 올랐다(ADR-H045, exit 9 반복 마찰). 이 프로젝트는 그 이후 실측 마찰로 1000→1500 까지 한 단계 더 올려 유지한다 — 템플릿보다 앞서 있는 값이라 되돌리지 않는다. files_max(10)·model_calls_max(24)는 안 건드렸다. files_max 는 어댑터 attribution.test_file_globs 에 걸린 테스트 파일을 빼고 센다 — lines_max 는 전체다 (ADR-H066).",
   "budget": {
     "files_max": 10,
     "lines_max": 1500,
@@ -188,24 +227,27 @@
     "normal_min_chars": 1500,
     "model_call_when_undecided": true
   },
-  "_models_note": "전부 **미검증**이다 — 슬롯별 모델 등급은 실측 없이 고른 초기값이다. 실행기는 실제로 어느 모델이 돌았는지 볼 수 없다(자진신고도 없다 — budget.blind_spots 와 같은 부류). 봉투가 지시 키마다 `model: X` 를 찍고 /feature 가 그 값을 Agent 호출의 model 인자로 그대로 넘긴다. inherit 는 메인 세션의 모델을 그대로 쓴다. xv 는 primary 가 MCP 도구라 폴백 에이전트(plan-reviewer)에만 적용된다. 프로파일 키가 없으면 default 로 낙하한다.",
+  "_models_note": "전부 **미검증**이다 — 슬롯별 모델 등급은 실측 없이 고른 값이다 (ADR-H061 로 1차 개정). 원칙은 작성자는 싸게(roles 는 전 레인 sonnet — 계약이 자유도를 묶었고 04 게이트·05 리뷰가 뒤에 있다), 검사자는 비싸게(plan · xv · reviewers 는 normal 에서 opus — 내용 품질에 기계 검사가 없다). 표에 inherit 는 없다 — 있으면 state.models.instructed 에 실값이 안 남고 워커 비용이 메인 세션 모델에 묶인다. 봉투가 지시 키마다 `model: X` 를 찍고 /feature 가 그 값을 Agent 호출의 model 인자로 그대로 넘긴다. 실행기는 실제로 어느 모델이 돌았는지 볼 수 없다. effort 는 여기가 아니라 .claude/agents/*.md 프론트매터가 역할별로 정한다 — Agent 호출 인자에 effort 가 없어 레인별로는 못 바꾼다. 05 수리 작성자는 04 수리와 같이 roles 슬롯이다 (ADR-H064). xv 는 primary 가 MCP 도구라 폴백 에이전트(plan-reviewer)에만 적용된다. 프로파일 키가 없으면 default 로 낙하한다.",
   "models": {
     "triage": {
       "default": "haiku"
     },
     "plan": {
-      "default": "sonnet"
+      "default": "sonnet",
+      "fix": "sonnet",
+      "normal": "opus"
     },
     "xv": {
-      "default": "inherit"
+      "default": "opus"
     },
     "roles": {
-      "default": "inherit",
-      "small": "sonnet"
+      "default": "sonnet",
+      "fix": "sonnet"
     },
     "reviewers": {
       "default": "sonnet",
-      "normal": "inherit"
+      "fix": "sonnet",
+      "normal": "opus"
     }
   },
   "background_threshold_sec": 180,

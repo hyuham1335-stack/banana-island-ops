@@ -40,7 +40,7 @@ slug 는 `^[a-z0-9][a-z0-9-]*$` 형태로 제안하고 사용자에게 확인받
 
 ```bash
 python scripts/pipeline/cli.py init --feature {slug} \
-    --request-file _workspace/requests/{slug}.md [--profile docs|small|normal]
+    --request-file _workspace/requests/{slug}.md [--profile docs|fix|small|normal]
 ```
 
 ## 2. 루프
@@ -75,6 +75,10 @@ python scripts/pipeline/cli.py next
 호출의 `model` 인자로 그대로 넘긴다** — `inherit` 면 인자를 주지 않는다. 네가
 고르지 마라. 실행기는 실제 모델을 검증하지 못하므로 이것은 지시로만 남는다.
 
+effort 는 Agent 호출 인자에 **없다.** 역할 에이전트의 effort 는
+`.claude/agents/*.md` 프론트매터가 역할별로 정한다 (ADR-H061). 프롬프트에
+"깊게 생각하라" 류의 effort 지시를 넣지 마라 — 손잡이가 아니고 접두부만 늘린다.
+
 ### 00-triage 에서
 
 `init` 뒤 첫 `next` 가 00 이다. **기계 신호로 확정되면 봉투가 01 지시문을 바로
@@ -93,16 +97,17 @@ exit 9 면 `unclear` 다 — 3지선다를 **그대로** 사용자에게 제시�
 플랜 제출이 기계 검사를 통과하면 1라운드에 닫힌다. 라우팅 밖의 제출은 받지
 않는다.
 
-1라운드는 리뷰어 둘(plan · xv)을 한 메시지 안에서 병렬 호출한다. **2라운드부터는
-봉투의 `planned` 에 있는 리뷰어만** 부른다 — 열린 Critical 을 낸 쪽이다. 다른
-리뷰어를 같이 부르지 마라. 라운드를 강제하는 것은 Critical 뿐이고, 열린
+01 의 리뷰어는 `plan-reviewer` 하나다 — xv 는 02 에서만 부른다 (ADR-H045). **2라운드부터는
+봉투의 `planned` 에 있을 때만** 부른다 — 열린 차단 지적이 남았을 때다. 봉투에 없는
+리뷰어를 부르지 마라. 라운드를 강제하는 것은 Critical 뿐이고, 열린
 Major·Minor 는 기록되어 보고서로 간다 — 고칠지는 네 판단이다.
 
 ### 02-cross-verify 에서
 
-01 이 **1라운드에 수렴했으면 02 는 기계가 건너뛴다** (`plan_unedited`). 봉투가
-03 지시문을 바로 낸다 — 교차검증기를 부르지 마라. 2라운드 이상이면 평소대로
-전문을 교차검증기에 넘긴다.
+02 는 **페이즈 파일의 `skip_policy` 로만 건너뛴다** — `docs_profile` · `fix_profile` ·
+`no_risk`(01 INTENT 의 `risk` 가 비어 있고 어느 라운드에도 Critical 이 없었을 때,
+ADR-H060). 봉투가 `skipped` 를 주면 03 지시문이 바로 나온다 — 교차검증기를
+부르지 마라. 그 밖에는 평소대로 전문을 교차검증기에 넘긴다.
 
 ### 03-implement 에서
 
@@ -112,10 +117,17 @@ Major·Minor 는 기록되어 보고서로 간다 — 고칠지는 네 판단이
 exit 3 으로 되돌아온다 — 예측이 빗나간 것이고, 계약을 쓰고 `next` 로 역할
 패킷을 받는다.
 
-역할 전원을 **한 메시지 안에서 동시 호출**한다. 각 역할에게 봉투의 역할 프롬프트
+봉투의 「이 런에 부르는 역할」 전원을 **한 메시지 안에서 동시 호출**한다 — 목록은
+계약이 정한다(`ui` 는 계약 `## 화면` 에 항목이 있을 때만, ADR-H057). `03_claims.json`
+의 역할도 정확히 그 목록이어야 하고, 패킷을 받은 뒤 계약의 `## 화면` 을 고치면 제출이
+exit 8 이다 — `next` 로 패킷을 다시 받는다. 각 역할에게 봉투의 역할 프롬프트
 템플릿을 채워 준다 — 소유권 표를 **그대로** 싣고 glob 을 문장으로 옮겨 적지 마라.
 
 계약 파일은 **네가 직접 쓴다.** 역할 에이전트에게 위임하지 않는다.
+`## 여정` 은 어댑터에 e2e 스테이지가 있고, 이 런으로 PRD 유저 스토리 하나의 AC 가 전부
+충족될 때만 1개다. 그 밖에는 "없음" 이다. e2e 가 없으면 계약을 쓰라는 봉투가 그렇게
+말한다 — 그래도 적으면 패킷 전에 exit 8 이고, "없음" 으로 되돌리고 `next` 를 다시 친다.
+`## 화면` 은 이 런이 화면 컴포넌트를 새로 만들거나 고칠 때만 적는다. 그 밖에는 "없음" 이다.
 
 역할 제출마다 `rules_read: [{path, sha256}]` 가 있어야 한다 — 지시 파일과
 `rules_dir` 직속 `.md` 의 현재 해시다 (ADR-H055). 없거나 다르면 exit 8 이고
@@ -198,6 +210,10 @@ PR 본문의 diff 통계는 `main...HEAD`(커밋된 것)를 읽는다. **03 이 
 
 **여기부터 밖으로 나간다.** 앞의 셋이 무료다.
 
+`pr` 전에 **흐름 노트 `06_pr_notes.json`** 을 쓴다 — PR 본문의 「핵심 흐름」과
+「직접 확인하는 법」이다(형식은 `06-pr.md` 1.5번). 단계마다 `refs` 에 계약이 이름
+붙인 식별자를 적는다. 없거나 계약 밖이면 `pr` 이 exit 8 로 알린다 (ADR-H058).
+
 ```bash
 python scripts/pipeline/cli.py precheck --scope pr --phase 06 --run-id <id>
 python scripts/pipeline/cli.py pr --run-id <id>
@@ -240,8 +256,10 @@ python scripts/pipeline/cli.py review07 --external <07_external.json> --run-id <
 **effort 를 네가 고르지 마라.** 결정론이어야 `escaped_05` 가 근거가 된다.
 봉투가 **`skipped`** 를 주면 `/code-review` 를 부르지 않는다 — `07_pr_review.json`
 을 `code_review: "skipped"` · findings 빈 배열로 내고 바로 `record` 로 간다.
-깨끗한 런(05 ok · Major 없음 · 04·05 수리 없음)이 그렇고, 일반 정합성은 05 의
-`gen` 이 이미 봤다 (ADR-H043). 승격은 그 뒤에 그대로 돈다.
+깨끗한 런(05 ok · `triage_miss` 없음 · 외부 Major 없음 · 05 지적이 0건이 아님 ·
+감사 런 아님)이 그렇고, 일반 정합성은 05 의 `gen` 이 이미 봤다 (ADR-H043 ·
+ADR-H059). "Major 잔여" 와 "04·05 수리 있음" 은 더 이상 트리거가 아니다. 승격은 그
+뒤에 그대로 돈다.
 
 ```bash
 python scripts/pipeline/cli.py record --phase 07 --file <07_pr_review.json> --run-id <id>
@@ -250,9 +268,22 @@ python scripts/pipeline/cli.py promote --scan --run-id <id>
 
 `promote --scan` 이 후보 0 이면 **모델을 부르지 않고 끝난다** — 초기 런의 최빈
 경로다. 후보가 있으면 판정을 내고 `--apply` 한다. **`duplicate` 에서 `create` 는
-금지고, `contradicts` 는 에스컬레이션이다.**
+금지고, `contradicts` 는 에스컬레이션이다.** 후보는 `lint`·`check` 목적지뿐이고,
+「지시문 검토 후보」(prose)는 08 로 간다 — 근본 원인을 고친 규칙은 `retire` 로
+끊는다 (ADR-H056).
 
-승격은 **별도 브랜치**로 간다. 기능 PR 에 규칙 변경을 섞지 마라.
+승격은 **별도 브랜치**로 간다. 기능 PR 에 규칙 변경을 섞지 마라. 순서는 이렇다
+(ADR-H065):
+
+1. **규칙 전용 브랜치를 네가 만들고**(base fetch 뒤 분기, 있으면 체크아웃) 규칙 파일을 거기 쓴다
+2. 그 브랜치에서 `promote --apply` 를 친다. 실행기가 어댑터의 `lint` · `check` 를 **현재
+   워크트리에서** 돌린다 — 기능 브랜치에서 치면 기능 코드와 규칙을 함께 잰다
+3. 게이트가 깨지면 실행기가 기계 강제 승격을 전부 `rejected` 로 적는다. **너는 브랜치를
+   폐기한다.** 기능 PR 은 영향받지 않는다
+4. **exit 10** 은 게이트(또는 베이스라인)를 돌리지 못한 인프라 실패다 — 아무것도 쓰이지
+   않았으니 원인을 고치고 다시 친다. 어댑터에 두 명령이 없으면 막지 않고 gap
+   `promotion_selfgate_unverified` 로 등급만 내려간다
+5. 통과하면 별도 PR 로 올린다
 
 ### 08-report 에서
 
@@ -265,6 +296,12 @@ python scripts/pipeline/cli.py report --run-id <id>
 않는다.** 표는 실행기가 조립하니 너는 서술만 쓴다 — **재지 않은 것을 숫자로
 적지 마라.** `배운 점`·`next_run` 은 80자 이상이다 — 미달이면 exit 8 로 되묻는다.
 
+`report` 전에 **지시문 검토**를 한다 (ADR-H056). config 의
+`project.instruction_review.skill` 을 부르고 입력은 `promote --scan`·보고서의
+「지시문 검토 후보」와 이 런의 「배운 점」이다. 결과를 `08_instruction_review.json`
+으로 옮겨 적는다 — 형식과 규칙은 `08-report.md` 「제출 형식」. 없거나 어긋나면
+`report` 가 exit 8 로 되묻는다. 흡수한 지시문 변경은 런 기록과 같이 커밋한다.
+
 `report` 가 exit 11 로 런을 닫으면 **런 기록을 기능 PR 에 싣는다** (ADR-H052):
 
 ```bash
@@ -273,7 +310,9 @@ git commit -m "chore: 파이프라인 실행 기록 반영 (<id> 런)"
 python scripts/pipeline/cli.py pr --run-id <id>      # 닫힌 런의 PR 갱신 — 06 record 로 이어지지 않는다
 ```
 
-기록이 diff 에 없으면 gap `run_record_missing` 으로 등급이 내려간다.
+기록이 diff 에 없으면 gap `run_record_missing` 으로 등급이 내려간다. 검토가
+바꾼 지시문 파일도 같다 — 커밋돼 있으면 `instruction_changed`(비강등) 와 PR
+본문 「규칙 변경」 절, 빠졌으면 `instruction_change_missing` 이다.
 
 ## 3. 종료 보고
 
@@ -321,7 +360,7 @@ python scripts/pipeline/cli.py resume --ack --answer-file <경로>   # 잠금 �
   요청이 세션마다 다른 레인을 탄다
 - **봉투가 찍은 `model:` 을 바꾸지 마라.** 이유: 등급은 `config.models` 가
   레인별로 정한 결정론이고, 실행기가 검증할 수 없는 지시라 네가 바꾸면 아무도
-  모른다
+  모른다. effort 도 같다 — 프론트매터가 정하고 너는 넘길 수단이 없다
 - **계약을 역할 에이전트에게 쓰게 하지 마라.** 이유: 메인 단독 소유다
 - **`harness/config.json` · `harness/adapters/*` · `harness/calibration.json` 을
   고치지 마라.** 이유: 게이트가 검사할 기준을 게이트를 통과하려고 고치는 것이다

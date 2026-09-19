@@ -4,24 +4,37 @@
 **05 에서 두 번째로 도는 검사이고 무료다.** 리뷰어를 부르기 전에 여기서 잡으면
 뒤에서 되돌릴 일이 없다. 모델을 한 번도 부르지 않는다.
 
-검사는 다섯이다:
+검사는 열이다:
 
 | 코드 | 무엇 | 심각도 |
 |---|---|---|
 | `missing_impl`            | 계약의 유닛이 소스에 있는가        | critical |
+| `missing_screen`          | 계약의 화면이 소스에 있는가 (ui 역할) | critical |
 | `missing_error_symbol`    | 오류 어휘 상수가 실재하는가        | critical |
 | `missing_entrypoint`      | 진입점이 실재하는가                | critical |
 | `untested_contract_item`  | 그 유닛을 참조하는 테스트가 있는가 | major (첫 3런 warn_only) |
+| `untested_entrypoint`     | 진입점마다 그 진입점의 테스트 파일이 있는가 | major (유예 없음, 03 이 먼저 거부) |
+| `untested_error_symbol`   | 오류 어휘 상수를 테스트가 한 번이라도 쓰는가 | major (유예 없음, 03 이 먼저 거부) |
+| `authz_untested`          | `[역할]` 태그 진입점의 테스트에 거부 단언이 있는가 | major (유예 없음, 03 이 먼저 거부) |
+| `missing_journey_spec`    | 계약 `## 여정` 의 스펙 파일에 그 슬러그가 선언돼 있는가 | critical (유예 없음, 03 이 먼저 거부) |
 | `out_of_contract`         | 계약에 없는 신규 public 심볼      | major (첫 3런 warn_only) |
+
+"첫 3런" 은 **그 검사가 지적을 낸 런**으로 센다 (ADR-H058 · `ledger.in_baseline_for`).
+
+테스트 셋(`untested_*`·`authz_untested`)은 **존재 검사이지 의미 검사가 아니다.**
+커버리지 도구가 없는 stdlib 실행기라 "그 이름·그 패턴이 테스트 본문에 있는가" 까지만
+본다 — 단언이 맞는지는 test-quality 리뷰어의 몫이다.
 
 **파일명이 `trace.py` 가 아닌 이유**: 이 패키지는 `sys.path` 에 자기 디렉터리를
 넣으므로 모듈 이름이 프로세스 전역 최상위가 된다. `trace` 는 stdlib 모듈이고,
 그 이름을 쓰면 stdlib 을 가린다.
 
-**스킵을 통과로 적지 않는다.** `entrypoint_resolver` 가 없으면 그 검사만 빠지고
-그 사실이 `skipped` 에 남는다. `no_contract` 런은 `skipped_no_contract` 다.
+**스킵을 통과로 적지 않는다.** `entrypoint_resolver` 가 없으면 진입점을 푸는 검사만 빠지고
+그 사실과 사유가 `skipped`·`skip_reasons` 에 남는다. `no_contract` 런은 `skipped_no_contract` 다.
+화면의 테스트는 묻지 않는다 — 계약에 화면이 있으면 `untested_screen` 이 `skipped` 에 남는다 (ADR-H057).
 """
 
+import posixpath
 import re
 import sys
 from pathlib import Path
@@ -34,8 +47,11 @@ import harness  # noqa: E402
 import contract as contract_mod  # noqa: E402
 import ledger  # noqa: E402
 
-CHECKS = ("missing_impl", "missing_error_symbol", "missing_entrypoint",
-          "untested_contract_item", "out_of_contract")
+CHECKS = ("missing_impl", "missing_screen", "missing_error_symbol", "missing_entrypoint",
+          "untested_contract_item", "untested_entrypoint", "untested_error_symbol",
+          "authz_untested", "missing_journey_spec", "out_of_contract")
+
+_NO_RESOLVER = "어댑터에 `entrypoint_resolver` 가 없다"
 
 # 오탐이 잦은 둘. 상위 계층 테스트로만 커버되거나 테스트가 심볼명을 직접 쓰지
 # 않는 스타일일 수 있고, 생성 코드가 `out_of_contract` 오탐을 만든다.
@@ -45,6 +61,13 @@ CHECKS = ("missing_impl", "missing_error_symbol", "missing_entrypoint",
 # 는 원인이 규명돼 고쳤다(변경 파일 전체 → 추가된 줄). 다만 **고친 구현의
 # 오탐률은 아직 0런이다** — 78/78 은 고치기 전 값이고, 그것을 근거로 승격하면
 # 재지 않은 것을 잰 것처럼 쓰는 셈이다. 여기 남겨 두고 P4·P5 가 새 값을 만든다.
+#
+# **테스트 존재 검사 셋(`_test_checks` — 03 제출과 05 가 같이 쓴다)은 여기 두지
+# 않는다** (ADR-H058 결정 8). 존재
+# 검사의 오탐은 구조적(재수출 import · 다른 거부 단언 모양)이라 매 런 똑같이 나고,
+# 런 수 유예는 그것을 고치지 못하고 거부만 미룬다. banana 실측(과거 계약 15개 ×
+# 현재 테스트 트리)에서 진입점 14 · 오류 상수 10 오탐 0, 자기 테스트를 빼면 14/14
+# 지적이었다. 위 둘은 78/78 · 6/6 오탐 이력이 있어 유예를 유지한다.
 BASELINE_CHECKS = ("untested_contract_item", "out_of_contract")
 
 DEFAULT_BASELINE_RUNS = 3
@@ -54,9 +77,14 @@ DEFAULT_BASELINE_RUNS = 3
 # 아직 안 지킨 것이고, 계약 자체가 틀렸다는 판정은 리뷰어·사람의 몫이다.
 CATEGORY = {
     "missing_impl": "BOUNDARY_VIOLATION",
+    "missing_screen": "BOUNDARY_VIOLATION",
     "missing_error_symbol": "BOUNDARY_VIOLATION",
     "missing_entrypoint": "BOUNDARY_VIOLATION",
     "untested_contract_item": "TEST_MISSING_FAILURE_PATH",
+    "untested_entrypoint": "TEST_MISSING_FAILURE_PATH",
+    "untested_error_symbol": "TEST_MISSING_FAILURE_PATH",
+    "authz_untested": "AUTHZ_MISSING_RULE",
+    "missing_journey_spec": "BOUNDARY_VIOLATION",
     "out_of_contract": "NAMING",
 }
 
@@ -73,7 +101,7 @@ _DEFAULT_PUBLIC = (r"^\s*export\s+(?:async\s+)?(?:function|const|class|type|"
 
 def run(root, config, adapter, contract_path, no_contract=False, changed=None,
         baseline_runs=None):
-    """다섯 검사를 돌린다. 반환은 그대로 `05_trace.json` 이 된다."""
+    """열 검사를 돌린다. 반환은 그대로 `05_trace.json` 이 된다."""
     root = Path(root)
     if no_contract or not contract_path:
         # §E3. 계약이 없는 런은 정상 경로다. 다만 **통과가 아니다** —
@@ -91,21 +119,31 @@ def run(root, config, adapter, contract_path, no_contract=False, changed=None,
     resolver = (adapter.get("entrypoint_resolver") or {}).get("kind") or "none"
     baseline_runs = (baseline_runs if baseline_runs is not None
                      else _baseline_runs(config))
-    in_baseline = ledger.in_baseline(root, baseline_runs)
+    in_baseline = {code: ledger.in_baseline_for(root, code, baseline_runs)
+                   for code in BASELINE_CHECKS}
 
     primary = config.get("primary_role") or "impl"
     test_role = _test_role(config)
 
-    findings, checks_run, skipped = [], [], []
+    findings, checks_run, skipped, skip_reasons = [], [], [], {}
 
     checks_run.append("missing_impl")
     findings += _missing_impl(root, parsed, files, primary)
+
+    checks_run.append("missing_screen")
+    findings += _missing_impl(root, parsed, files, _screen_role(config),
+                              key="screens", code="missing_screen", noun="화면")
+    if parsed.get("screens"):
+        skipped.append("untested_screen")
+        skip_reasons["untested_screen"] = (
+            "화면의 단위테스트는 두지 않는다 — 통과가 아니라 미수행이다 (ADR-H057)")
 
     checks_run.append("missing_error_symbol")
     findings += _missing_error_symbol(root, parsed, config, files, primary)
 
     if resolver == "none":
         skipped.append("missing_entrypoint")
+        skip_reasons["missing_entrypoint"] = _NO_RESOLVER
     else:
         checks_run.append("missing_entrypoint")
         findings += _missing_entrypoint(adapter, parsed, files, primary)
@@ -113,18 +151,16 @@ def run(root, config, adapter, contract_path, no_contract=False, changed=None,
     checks_run.append("untested_contract_item")
     findings += _untested(root, config, adapter, parsed, files, test_role)
 
+    tc = _test_checks(root, adapter, parsed, files, test_role)
+    findings += tc["findings"]
+    checks_run += tc["checks_run"]
+    skipped += tc["skipped"]
+    skip_reasons.update(tc["skip_reasons"])
+
     checks_run.append("out_of_contract")
     findings += _out_of_contract(root, adapter, parsed, changed, primary)
 
-    for f in findings:
-        if f["code"] in BASELINE_CHECKS and in_baseline:
-            f["resolution"] = "warn_only"
-            f["why_warn_only"] = (
-                "baseline 기간이다 — 원장이 본 런이 %d 로 %d 에 못 미친다. "
-                "오탐률을 보고 나서 승격한다 (미검증 상속값)."
-                % (ledger.distinct_runs(root), baseline_runs))
-        else:
-            f.setdefault("resolution", "deferred")
+    _apply_baseline(root, findings, in_baseline, baseline_runs)
 
     blocking = [f for f in findings
                 if f["severity"] == "critical" and f["resolution"] != "warn_only"]
@@ -133,7 +169,11 @@ def run(root, config, adapter, contract_path, no_contract=False, changed=None,
         "findings": findings,
         "checks_run": checks_run,
         "skipped": skipped,
+        "skip_reasons": skip_reasons,
         "entrypoint_resolver": resolver,
+        # 진입점을 파일로 풀지 못해 테스트 존재를 묻지 않은 것. 지적이 아니다 —
+        # 진입점 부재는 `missing_entrypoint` 의 몫이다.
+        "entrypoints_unresolved": tc["unresolved"],
         "baseline": {"in_baseline": in_baseline,
                      "distinct_runs": ledger.distinct_runs(root),
                      "baseline_runs": baseline_runs},
@@ -141,12 +181,82 @@ def run(root, config, adapter, contract_path, no_contract=False, changed=None,
         # 04 의 `contract.scope.repo_files` 와 같아야 한다 (M50).
         "repo_files": len(files),
         "contract": {"units": len(parsed.get("units") or []),
+                     "screens": len(parsed.get("screens") or []),
                      "entrypoints": len(parsed.get("entrypoints") or []),
                      "errors": len(parsed.get("errors") or []),
+                     "journeys": len(parsed.get("journeys") or []),
                      "dropped": parsed.get("dropped") or []},
         "note": ("Critical 은 리뷰어를 부르기 전에 선수리한다 — 계약과 코드가 "
                  "어긋난 채로 리뷰하면 리뷰어가 그것을 다시 발견하는 데 돈을 쓴다."),
     }
+
+
+def required_tests(root, config, adapter, contract_path):
+    """테스트 존재 검사 셋만 — **03 제출이 부른다** (ADR-H058 결정 7·8).
+
+    05 의 `run()` 과 **같은 `_test_checks`** 를 쓴다. 두 자리가 다른 목록을 보면
+    03 통과가 05 지적을 예고하지 못한다. 05 의 Major 는 원장에 `deferred` 로
+    쌓일 뿐 수리 루프를 돌리지 않으므로, 워커 맥락이 살아 있는 03 에서 요구해야
+    실제로 고쳐진다. 셋은 유예가 없어(`BASELINE_CHECKS` 밖) 지적이 곧 거부다.
+
+    반환: {"findings": [...], "skipped": [...], "skip_reasons": {...}}
+    """
+    root = Path(root)
+    parsed = contract_mod.parse(Path(contract_path).read_text(encoding="utf-8"),
+                                config)
+    tc = _test_checks(root, adapter, parsed, repo_files(root), _test_role(config))
+    return {"findings": tc["findings"], "skipped": tc["skipped"],
+            "skip_reasons": tc["skip_reasons"]}
+
+
+def _test_checks(root, adapter, parsed, files, test_role):
+    """`untested_entrypoint` · `untested_error_symbol` · `authz_untested` ·
+    `missing_journey_spec`."""
+    resolver = (adapter.get("entrypoint_resolver") or {}).get("kind") or "none"
+    authz_rx = (adapter.get("attribution") or {}).get("authz_denied_pattern")
+    tests = _unit_test_files(adapter, files, parsed)
+    out = {"findings": [], "checks_run": [], "skipped": [], "skip_reasons": {},
+           "unresolved": []}
+
+    if resolver == "none":
+        out["skipped"].append("untested_entrypoint")
+        out["skip_reasons"]["untested_entrypoint"] = _NO_RESOLVER
+    else:
+        out["checks_run"].append("untested_entrypoint")
+        got, out["unresolved"] = _untested_entrypoint(root, adapter, parsed, files,
+                                                      tests, test_role)
+        out["findings"] += got
+
+    out["checks_run"].append("untested_error_symbol")
+    out["findings"] += _untested_error_symbol(root, parsed, tests, test_role)
+
+    if resolver == "none":
+        out["skipped"].append("authz_untested")
+        out["skip_reasons"]["authz_untested"] = _NO_RESOLVER
+    elif not authz_rx:
+        out["skipped"].append("authz_untested")
+        out["skip_reasons"]["authz_untested"] = (
+            "어댑터에 `attribution.authz_denied_pattern` 이 없다")
+    else:
+        out["checks_run"].append("authz_untested")
+        out["findings"] += _authz_untested(root, adapter, parsed, files, tests,
+                                           re.compile(authz_rx), test_role)
+
+    out["checks_run"].append("missing_journey_spec")
+    out["findings"] += _missing_journey_spec(root, parsed, files, test_role)
+    return out
+
+
+def _apply_baseline(root, findings, in_baseline, baseline_runs):
+    for f in findings:
+        if in_baseline.get(f["code"]):
+            f["resolution"] = "warn_only"
+            f["why_warn_only"] = (
+                "baseline 기간이다 — 이 검사가 지적을 낸 런이 %d 로 %d 에 못 "
+                "미친다. 오탐률을 보고 나서 승격한다 (미검증 상속값)."
+                % (ledger.trace_runs(root, f["code"]), baseline_runs))
+        else:
+            f.setdefault("resolution", "deferred")
 
 
 def repo_files(root):
@@ -173,6 +283,14 @@ def _test_role(config):
     return config.get("primary_role") or "impl"
 
 
+def _screen_role(config):
+    """화면을 소유하는 역할 — `when_contract_section` 이 `screens` 인 역할. 없으면 primary."""
+    for role in config.get("roles") or []:
+        if role.get("when_contract_section") == "screens":
+            return role.get("id")
+    return config.get("primary_role") or "impl"
+
+
 def _finding(code, severity, role, title, **kw):
     """`rule_slug` 를 여기서 단다 — **승격 집계의 축**이다 (ADR-H034).
 
@@ -180,7 +298,7 @@ def _finding(code, severity, role, title, **kw):
     **리뷰어 코드**(`cli.py` 라우팅)와 **taxonomy 카테고리 코드**(`ledger.py`)
     두 뜻으로 쓰이기 때문이다. 세 번째 뜻을 얹지 않는다.
 
-    `CATEGORY` 가 다대일이라(코드 5 → category 3) category 만으로는
+    `CATEGORY` 가 다대일이라(코드 8 → category 4) category 만으로는
     `missing_impl` 과 `missing_entrypoint` 를 못 가른다. 슬러그가 그것을
     가르고, 동시에 제목에 박힌 심볼 이름을 축에서 뺀다.
     """
@@ -193,21 +311,24 @@ def _finding(code, severity, role, title, **kw):
 
 # ------------------------------------------------------------- missing_impl
 
-def _missing_impl(root, parsed, files, primary):
+def _missing_impl(root, parsed, files, primary, key="units", code="missing_impl",
+                  noun="유닛"):
     """**컨테이너명 + 심볼명 쌍**으로 찾는다.
 
     심볼명만 보면 흔한 이름이 다른 파일에 있어 거짓 통과한다. 컨테이너를 리포의
     파일과 맞추지 못하면 통과가 아니라 `container_resolved: false` 로 낙하한다 —
     "못 찾았다"가 "없다"보다 약한 판정이지만 **침묵보다는 강하다.**
+
+    계약 `## 화면`(`missing_screen`)도 같은 형식이라 같은 본체를 쓴다 (ADR-H057).
     """
     out = []
-    for unit in parsed.get("units") or []:
+    for unit in parsed.get(key) or []:
         symbol = unit.get("symbol")
         src = contract_mod._source_for_container(unit.get("container"), files)
         if src is None:
             out.append(_finding(
-                "missing_impl", "critical", primary,
-                "계약의 유닛 %s 를 담을 파일을 찾지 못했다" % unit.get("raw"),
+                code, "critical", primary,
+                "계약의 %s %s 를 담을 파일을 찾지 못했다" % (noun, unit.get("raw")),
                 container=unit.get("container"), symbol=symbol,
                 container_resolved=False,
                 evidence="컨테이너 %r 이 리포의 어느 파일과도 맞지 않는다"
@@ -215,8 +336,8 @@ def _missing_impl(root, parsed, files, primary):
             continue
         if not _has_symbol(root / src, symbol):
             out.append(_finding(
-                "missing_impl", "critical", primary,
-                "계약의 유닛 %s 가 소스에 없다" % unit.get("raw"),
+                code, "critical", primary,
+                "계약의 %s %s 가 소스에 없다" % (noun, unit.get("raw")),
                 container=unit.get("container"), symbol=symbol, path=src,
                 container_resolved=True,
                 evidence="%s 에 %r 이 없다" % (src, symbol)))
@@ -291,8 +412,7 @@ def _untested(root, config, adapter, parsed, files, test_role):
 
     커버리지 도구가 없는 상태에서 이 검사가 "테스트 약화" 탐지를 대신한다.
     """
-    globs = (adapter.get("attribution") or {}).get("test_file_globs") or []
-    tests = [f for f in files if harness.glob_any(globs, f)]
+    tests = _unit_test_files(adapter, files, parsed)
     blob = _concat(root, tests)
     out = []
     for unit in parsed.get("units") or []:
@@ -371,6 +491,177 @@ def _concat(root, rels):
         except (OSError, UnicodeDecodeError):
             continue
     return "\n".join(parts)
+
+
+def _test_files(adapter, files):
+    globs = (adapter.get("attribution") or {}).get("test_file_globs") or []
+    return [f for f in files if harness.glob_any(globs, f)]
+
+
+def _unit_test_files(adapter, files, parsed):
+    """유닛·오류 어휘·진입점 테스트 검사가 세는 파일 — **e2e 는 빼고.**
+
+    e2e 스펙이 오류 상수를 화면 문구로 단언하거나 심볼명을 담으면 유닛 테스트
+    부재를 가린다. 빼는 것은 어댑터 `attribution.e2e_file_globs` 와 이 계약의 여정
+    스펙 파일이다 — 코어는 e2e 가 어디 사는지 모른다 (ADR-H031).
+    """
+    e2e = (adapter.get("attribution") or {}).get("e2e_file_globs") or []
+    specs = {contract_mod._source_for_container(j.get("container"), files)
+             for j in parsed.get("journeys") or []}
+    return [f for f in _test_files(adapter, files)
+            if f not in specs and not harness.glob_any(e2e, f)]
+
+
+# ------------------------------------------------ 진입점·오류 어휘·인가 테스트
+
+# `from "…"` · `require("…")` · `import("…")`. 여러 줄에 걸친 동적 import 도 받는다.
+_IMPORT_SPEC = re.compile(
+    r"""(?:\bfrom\s+|\brequire\(\s*|\bimport\(\s*)["']([^"']+)["']""")
+
+_RULES_TRIED = "같은 디렉터리의 스템 일치 · import 지정자 해석"
+
+
+def _tests_for_entrypoint(src, tests, root, adapter):
+    """이 진입점 파일을 검증하는 테스트 파일. **존재 검사 전용이다.**
+
+    `contract._tests_for_source` 를 쓰지 않는 이유 (N1): 그 함수의 스템 일치는
+    디렉터리를 보지 않아, 진입점 파일이 전부 `route.ts` 인 스택에서 리포의 모든
+    `route.test.ts` 를 고른다. 스코프 선택에서 과선택은 비용이지만 **존재 검사에서는
+    거짓 통과**다 — 검사가 항상 통과한다.
+
+    규칙은 둘이다. (a) 같은 부모 디렉터리에서 스템이 같다 (b) 테스트 본문의 import
+    지정자를 풀면 확장자 없이 `src` 와 같다. 상대 경로는 테스트의 디렉터리 기준,
+    별칭은 어댑터 `attribution.import_aliases` 의 접두 치환이다. AST 는 쓰지 않는다.
+    """
+    parent = posixpath.dirname(src)
+    stem = posixpath.basename(src).split(".")[0]
+    target = posixpath.splitext(src)[0]
+    aliases = (adapter.get("attribution") or {}).get("import_aliases") or {}
+    out = []
+    for t in tests:
+        if (posixpath.dirname(t) == parent
+                and posixpath.basename(t).split(".")[0] == stem):
+            out.append(t)
+            continue
+        try:
+            text = (Path(root) / t).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for spec in _IMPORT_SPEC.findall(text):
+            if _resolve_spec(spec, t, aliases) == target:
+                out.append(t)
+                break
+    return out
+
+
+def _resolve_spec(spec, test_rel, aliases):
+    """import 지정자 → 확장자 없는 리포 상대 경로. 풀 수 없으면 None."""
+    if spec.startswith("."):
+        path = posixpath.normpath(posixpath.join(posixpath.dirname(test_rel), spec))
+    else:
+        prefix = next((a for a in aliases if spec.startswith(a)), None)
+        if prefix is None:
+            return None               # 패키지 import — 리포 파일이 아니다
+        path = posixpath.normpath(aliases[prefix] + spec[len(prefix):])
+    base, ext = posixpath.splitext(path)
+    return base if ext in (".ts", ".tsx", ".js", ".jsx", ".mjs") else path
+
+
+def _untested_entrypoint(root, adapter, parsed, files, tests, test_role):
+    """진입점마다 **그 진입점의** 테스트 파일이 하나라도 있는가.
+
+    반환: (지적, 해석하지 못한 진입점의 raw 목록). 경로 문자열 검색은 쓰지 않는다 —
+    라우트 테스트는 핸들러를 직접 호출해 경로가 본문에 안 나온다.
+    """
+    out, unresolved = [], []
+    for ep in parsed.get("entrypoints") or []:
+        src = contract_mod._source_for_entrypoint(adapter, ep, files)
+        if src is None:
+            unresolved.append(ep.get("raw"))
+            continue
+        if _tests_for_entrypoint(src, tests, root, adapter):
+            continue
+        out.append(_finding(
+            "untested_entrypoint", "major", test_role,
+            "계약의 진입점 %s 를 검증하는 테스트가 없다" % ep.get("raw"),
+            method=ep.get("method"), route=ep.get("path"), path=src,
+            evidence="%s 를 가리키는 테스트 파일이 없다 (시도한 규칙: %s)"
+                     % (src, _RULES_TRIED)))
+    return out, unresolved
+
+
+def _untested_error_symbol(root, parsed, tests, test_role):
+    """오류 어휘 상수가 테스트 본문에 한 번도 안 나오는가. 문자열 존재 검사다."""
+    blob = _concat(root, tests)
+    out = []
+    for name in parsed.get("errors") or []:
+        if re.search(r"\b%s\b" % re.escape(name), blob):
+            continue
+        out.append(_finding(
+            "untested_error_symbol", "major", test_role,
+            "계약의 오류 어휘 %s 를 단언하는 테스트가 없다" % name,
+            symbol=name,
+            evidence="테스트 파일 %d개 어디에도 %r 이 없다" % (len(tests), name)))
+    return out
+
+
+def _authz_untested(root, adapter, parsed, files, tests, rx, test_role):
+    """`[역할]` 태그 진입점은 **그 진입점의** 테스트에 거부 단언 패턴이 있는가.
+
+    다른 라우트의 거부 테스트는 세지 않는다. 존재 검사이지 의미 검사가 아니다 —
+    패턴이 본문에 있으면 통과이고, 그 단언이 맞는지는 리뷰어가 본다.
+    """
+    out = []
+    for ep in parsed.get("entrypoints") or []:
+        if not ep.get("tags"):
+            continue
+        src = contract_mod._source_for_entrypoint(adapter, ep, files)
+        if src is None:
+            continue                  # untested_entrypoint 가 unresolved 로 남긴다
+        own = _tests_for_entrypoint(src, tests, root, adapter)
+        if rx.search(_concat(root, own)):
+            continue
+        out.append(_finding(
+            "authz_untested", "major", test_role,
+            "역할 %s 가 걸린 진입점 %s 에 거부 테스트가 없다"
+            % (", ".join(ep["tags"]), ep.get("raw")),
+            method=ep.get("method"), route=ep.get("path"), path=src,
+            tags=ep["tags"],
+            evidence="이 진입점의 테스트 파일 %d개에 %r 이 없다"
+                     % (len(own), rx.pattern)))
+    return out
+
+
+def _missing_journey_spec(root, parsed, files, test_role):
+    """계약 `## 여정` 의 스펙 파일이 실재하고 슬러그가 **선언**으로 있는가.
+
+    파일 전문의 `\b슬러그\b` 는 주석 한 줄로 통과하므로 쓰지 않는다 — 최상위
+    그룹 이름(`describe`/`test.describe` 의 문자열 인자)이나 `export` 이름만 센다.
+    """
+    out = []
+    for j in parsed.get("journeys") or []:
+        src = contract_mod._source_for_container(j.get("container"), files)
+        if src is not None and _has_symbol_declared(Path(root) / src, j["symbol"]):
+            continue
+        out.append(_finding(
+            "missing_journey_spec", "critical", test_role,
+            "계약의 여정 %s 의 스펙이 없다" % j.get("raw"),
+            container=j.get("container"), symbol=j["symbol"], path=src,
+            evidence=("%r 이 리포에 없다" % j.get("container") if src is None else
+                      "%s 에 %r 을 이름으로 하는 describe 나 export 가 없다"
+                      % (src, j["symbol"]))))
+    return out
+
+
+def _has_symbol_declared(path, symbol):
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+    s = re.escape(symbol)
+    rx = re.compile(r"""\b(?:test\.)?describe(?:\.\w+)?\(\s*["'`]%s["'`]"""
+                    r"|\bexport\s+(?:const|function|let)\s+%s\b" % (s, s))
+    return rx.search(text) is not None
 
 
 # ------------------------------------------------------------ out_of_contract

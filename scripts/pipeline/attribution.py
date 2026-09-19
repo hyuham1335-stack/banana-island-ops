@@ -252,14 +252,23 @@ def _mentions_contract_symbol(unit, contract_symbols):
 
 # ------------------------------------------------------------------ 3단계
 
-def resolve_ambiguous(failures, config, flip_state):
+def resolve_ambiguous(failures, config, flip_state, roles=None):
     """ambiguous → primary_role → 동일 시그니처 재발 시 다음 역할 → 계약 결함.
 
     **동시 배정을 하지 않는다.** 같은 하나의 동작을 두고 둘에게 동시에 보내면
     구현은 테스트에 맞춰, 테스트는 구현에 맞춰 서로를 좇는 핑퐁이 나고 둘 다
     계약에서 멀어진다.
+
+    사다리는 **이 런에 디스패치된 역할**(`roles`, 03 이 저장한 순서)로만 만든다
+    (ADR-H057). 기록이 없으면 조건부 역할(`when_contract_section`)을 뺀다 — 불린
+    적 없는 역할에게 수리를 보내지 않는다. 단언 실패(`kind: test`)는 조건부
+    역할을 건너뛴다 — 그 역할은 테스트를 소유하지 않는다.
     """
-    order = [r["id"] for r in config.get("roles") or []]
+    by_id = {r["id"]: r for r in config.get("roles") or []}
+    if roles is None:
+        order = [i for i, r in by_id.items() if not r.get("when_contract_section")]
+    else:
+        order = [i for i in roles if i in by_id]
     primary = config.get("primary_role")
     if primary in order:
         order = [primary] + [r for r in order if r != primary]
@@ -270,11 +279,13 @@ def resolve_ambiguous(failures, config, flip_state):
         if f.get("owner") != "ambiguous":
             out.append(f)
             continue
+        ladder = ([i for i in order if not by_id[i].get("when_contract_section")]
+                  if f.get("kind") == "test" else order)
         node = flip_state.setdefault(f["sig"], {"assigned": [], "count": 0})
         node["count"] += 1
         idx = len(node["assigned"])
-        if idx < len(order):
-            owner = order[idx]
+        if idx < len(ladder):
+            owner = ladder[idx]
             node["assigned"].append(owner)
             f["owner"] = owner
             f["owner_reason"] = ("ambiguous → %s" %
@@ -304,7 +315,7 @@ def owner_sig(failure):
     return "%s|%s" % (failure.get("owner"), failure.get("sig"))
 
 
-def dispatch(failures, config, prev_sigs, flip_state, stuck_after=2):
+def dispatch(failures, config, prev_sigs, flip_state, stuck_after=2, roles=None):
     """소유자별 배정. 같은 대상을 공유하면 하나만 보낸다.
 
     `prev_sigs` 는 이전 라운드들의 **쌍** 목록이다(`owner_sig`). `stuck_after`
@@ -312,7 +323,7 @@ def dispatch(failures, config, prev_sigs, flip_state, stuck_after=2):
     유일한 경로다 — 예전에는 선언만 있고 `2` 가 여기 박혀 있어 값을 3 으로
     바꿔도 동작이 안 변했다.
     """
-    resolved = resolve_ambiguous(failures, config, flip_state)
+    resolved = resolve_ambiguous(failures, config, flip_state, roles=roles)
     sigs = [f["sig"] for f in resolved]
     pairs = [owner_sig(f) for f in resolved]
     prior = list(prev_sigs or [])
@@ -342,6 +353,16 @@ def dispatch(failures, config, prev_sigs, flip_state, stuck_after=2):
     deferred = [{"owner": o, "failure_count": len(by_owner[o]),
                  "reason": "동시 배정 금지 — 대상을 공유한다"}
                 for o in owners if o != chosen]
+    # **미룬 배정은 없던 일이다.** `resolve_ambiguous` 가 올린 flip 인덱스를
+    # 그대로 두면 다음 라운드에 그 실패가 한 역할을 건너뛴다. 정체 체인도
+    # 같다 — 나가지 않은 쌍을 쌓으면 다음 라운드의 첫 시도가 곧 정체다.
+    for o in (d["owner"] for d in deferred):
+        for f in by_owner[o]:
+            if (f.get("owner_reason") or "").startswith("ambiguous"):
+                node = flip_state.get(f["sig"])
+                if node and node["assigned"] and node["assigned"][-1] == o:
+                    node["assigned"].pop()
+    pairs = [owner_sig(f) for f in by_owner[chosen]]
     return {"by_owner": {chosen: by_owner[chosen]}, "owner": chosen,
             "parallel": False, "deferred": deferred, "stuck": stuck,
             "sigs": sigs, "pairs": pairs, "failures": resolved}
