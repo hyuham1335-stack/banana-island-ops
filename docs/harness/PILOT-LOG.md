@@ -79,3 +79,67 @@
 ## 런 기록
 
 <!-- 첫 런이 여기에 자기 절을 연다. -->
+
+## 파이프라인 런 P1 — `{기능 이름}` (예측 초안 2026-09-19 · 런 전)
+
+> **런 전에 적은 절이다.** 요청이 정해지면 `대상`·레인 가정을 채우고, 런이 끝나면
+> 아래 표의 「결과」 칸과 나머지 절을 채운다. 예측 문구는 런 뒤에 고치지 않는다.
+
+| 항목 | 값 |
+|------|-----|
+| 일자 | 미정 |
+| 런 ID | 미정 |
+| 브랜치 | 미정 (base `main` e0f8d19 — 템플릿 H056~H067 동기화 직후) |
+| 대상 | 미정 |
+| 어댑터 | `nextjs-ts` (`verified: true` — 2026-09-19 `verify-adapter`, 완주 15런 전부 00~08 passed) |
+| 결과 | 미측정 |
+| 머신 | Windows 10 · python 3 · npm · cp949 |
+
+### 캘리브레이션 (2026-09-19 22:58, 런 전 재측정)
+
+| 스테이지 | 소요 | 테스트 | 비고 |
+|---|---:|---:|---|
+| compile | 23.42s | — | `npm run typecheck` |
+| lint | 46.06s | — | |
+| check | 11.23s | — | `npm audit --audit-level=high` |
+| scoped | 1.44s | — | |
+| full | 10.91s | 682 | 백그라운드 OFF (임계 180s) · 타임아웃 300s |
+| e2e | 미측정 | — | `cmd: null` → `stage_absent:e2e` |
+| build | 45.25s | — | |
+| docs | 미측정 | — | `cmd: null` |
+
+유도: `tests_ran_floor` 14 → **613**. `retry_budget` 미측정(attempts 기록 0 step).
+
+### 이 런이 확인하기로 했던 것 — 그리고 결과
+
+기준선은 이 리포의 직전 12런(`20260915-0930-3b43` ~ `20260917-0028-40dc`, `normal` 10 · `small` 2)의
+`state.json` 에서 뽑았다. 레인은 **`normal` 을 가정**한다 — `small` 이면 2·3 은 해당 없음으로 적는다.
+
+| # | 예측 | 기준선 · 근거 | 볼 곳 | 결과 |
+|---|---|---|---|---|
+| 1 | 등급은 `PASS_WITH_GAPS` 이고 gap 은 `stage_absent:e2e` · `stage_absent:docs` 둘이 전부 — `adapter_unverified` 는 사라진다 | 완주한 11런 모두 이 둘 + `adapter_unverified` 를 가짐 (`e9d6` 은 미완주). 어댑터는 런 전에 `verified: true` 로 올렸다 | `state.gaps` | |
+| 2 | 테스트 파일이 바뀌면 `test` 리뷰어는 떨어지지 않는다. 다섯이 다 매칭되면 `routing.dropped` 는 `[arch]` | 직전 12런 중 10런이 `test` 를 떨어뜨림 (ADR-H062) | 05 `routing.dropped` | |
+| 3 | `src/services/**` 를 건드리면 `data` 가 매칭되고, 01 의 `risk` 에 `schema`·`boundary` 가 없으면 `risk_undeclared: ["data"]` 가 남는다 | 기준선 없음 — 새 관측 (ADR-H067) | 이벤트 `risk_undeclared` · 05 노드 | |
+| 4 | `risk` 가 비지 않아 02 는 돈다 (`no_risk` 생략 안 됨) | 직전 12런 모두 02 가 돌았음 (xv primary 11 · fallback 1) | 02 `status` · 생략 사유 | |
+| 5 | `precheck` 가 **파일 수로** exit 9 를 내지 않는다 | 직전 at_05 파일 수 6~23, 10 초과 6런 — 테스트 포함 셈 (ADR-H066) | `precheck.budget` · `test_files_excluded` | |
+| 6 | `budget.model_calls.total` 은 12~20 이고 상한 24 안 | 완주 11런 9~19 (중앙 12). 05 수리가 이제 계수에 들어가 늘 수 있다 (ADR-H064) | `budget.model_calls` | |
+| 7 | 04 수리 ≤ 1회 · 05 수리(`review_repair`) ≤ 2회 — 작성자가 전 레인 sonnet 이어도 | 직전 04 수리 0~2 · 05 수리 0~2 (ADR-H061) | `counters.repair` · `counters.review_repair` · `state.models.instructed` | |
+| 8 | 요청이 화면을 건드리면 계약에 `## 화면` 이 생기고 03 이 `ui-writer` 를 부른다. `src/components/**` 변경이 impl 소유 위반으로 걸리지 않는다 | 새 역할 — 기준선 없음 (ADR-H057) | 03 디스패치 · 소유 검사 | |
+| 9 | 런 비용 — **예측하지 않는다.** 첫 값이 기준선이다. 세션을 닫은 뒤 `cli.py cost` 로 잰다 | 원장이 이 런부터 쌓임 | `cli.py cost --run-id` | |
+
+### 막힌 지점 · 수동 개입
+
+미측정
+
+### 이 런이 연 하네스 결함
+
+| ID | 무엇 | 상태 |
+|---|---|---|
+
+### 이 런이 승격 판단에 주는 답
+
+미측정
+
+### 다음 런에서 볼 것
+
+미측정
