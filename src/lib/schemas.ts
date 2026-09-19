@@ -271,3 +271,50 @@ export const EditContentInputSchema = z
   });
 
 export type EditContentInput = z.infer<typeof EditContentInputSchema>;
+
+/**
+ * FR-022 환율 적재 — 계약(run 20260919-2343-1c04).
+ * `realDate` 는 형식(YYYY-MM-DD)뿐 아니라 실존 날짜인지(예: 2026-02-30 거부)까지 본다.
+ */
+function isRealDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [y, m, d] = value.split("-").map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  return date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d;
+}
+
+const realDateField = () => z.string().trim().refine(isRealDate, "날짜 형식이 올바르지 않습니다.");
+
+const decimalStringField = () =>
+  z
+    .string()
+    .trim()
+    .regex(/^\d+(\.\d{1,8})?$/, "숫자 형식이 올바르지 않습니다.")
+    .refine((v) => Number(v) > 0, "0보다 커야 합니다.");
+
+export const ManualFxInputSchema = z.object({
+  rateDate: realDateField(),
+  usdKrw: decimalStringField(),
+  phpKrw: decimalStringField(),
+});
+
+export type ManualFxInput = z.infer<typeof ManualFxInputSchema>;
+
+export const FrankfurterLatestSchema = z.object({
+  base: z.literal("USD"),
+  date: z.string().trim(),
+  rates: z
+    .object({
+      KRW: z.number().finite().positive(),
+      PHP: z.number().finite().positive(),
+    })
+    .passthrough(),
+});
+
+export type FrankfurterLatest = z.infer<typeof FrankfurterLatestSchema>;
+
+export const FxQuerySchema = z.object({
+  date: realDateField().optional(),
+});
+
+export type FxQuery = z.infer<typeof FxQuerySchema>;

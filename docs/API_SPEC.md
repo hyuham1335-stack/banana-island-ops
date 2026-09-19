@@ -52,7 +52,7 @@
 
 | 메서드 | 경로 | 역할 | 설명 |
 |---|---|---|---|
-| POST | `/api/fx/refresh` | 크론 (`Authorization: Bearer CRON_SECRET`) | 환율 적재 |
+| GET / POST | `/api/fx/refresh` | 크론 (`Authorization: Bearer CRON_SECRET`) | 환율 적재 (Vercel Cron 은 GET 으로 부른다) |
 | POST | `/api/fx` | admin | 환율 수동 입력 |
 | POST | `/api/plans/webhook` | Apps Script (`X-Sheet-Secret`) | 시트 저장 시 동기화 |
 | GET / POST | `/api/cost-sheets` | admin | 원가표 목록 / 새 버전(복제 포함) |
@@ -237,15 +237,15 @@ ChannelFormat {
 
 ### GET `/api/fx?date=YYYY-MM-DD`
 
-→ 200 `{ data: FxSnapshot }` · `FxSnapshot { asOf: string, staleDays: number, rates: { usdKrw: string, phpKrw: string }, source: 'api'|'manual' }`. 어떤 날짜의 환율도 없으면 503 `FX_UNAVAILABLE`(시드가 있으므로 정상 운영에서는 발생하지 않음).
+→ 200 `{ data: FxSnapshot }` · `FxSnapshot { asOf: string, staleDays: number, rates: { usdKrw: string, phpKrw: string }, source: 'api'|'manual' }`. `date` 를 생략하면 오늘(UTC). `asOf` 는 `date` 이하에서 두 통화쌍이 모두 있는 가장 최근 기준일이고 `staleDays = max(0, date − asOf)`(일). 환율이 한 행도 없으면 503 `FX_UNAVAILABLE`.
 
-### POST `/api/fx/refresh` (크론)
+### GET · POST `/api/fx/refresh` (크론)
 
-헤더 `Authorization: Bearer ${CRON_SECRET}` 아니면 403. → 200 `{ data: FxSnapshot }`. 외부 실패 503 `FX_UNAVAILABLE`(기존 값 유지).
+두 메서드가 같은 동작이다 — Vercel Cron 은 GET 으로 부르고, 사람이 수동으로 다시 돌릴 때는 POST 를 써도 된다. 헤더가 `Authorization: Bearer ${CRON_SECRET}` 와 정확히 같지 않으면(헤더 없음 · `CRON_SECRET` 미설정 포함) 403 `FORBIDDEN_ROLE` 이고 외부 호출을 하지 않는다. 기준일(`rate_date`)은 **적재일(UTC 오늘)** 이다 — ECB 가 갱신하지 않는 주말·공휴일엔 직전 게시값이 그날 날짜로 저장된다. → 200 `{ data: FxSnapshot }`. 외부 실패(네트워크·타임아웃·비 2xx·스키마 위반) 503 `FX_UNAVAILABLE`(기존 값 유지).
 
 ### POST `/api/fx` (admin)
 
-요청 `ManualFxInput { rateDate, usdKrw: string, phpKrw: string }` → 201.
+요청 `ManualFxInput { rateDate, usdKrw: string, phpKrw: string }` → 201 `{ data: FxSnapshot }`(`source: 'manual'`). 같은 `rateDate` 로 다시 넣으면 두 행을 덮어쓴다. editor 는 본문을 보기 전에 403 `FORBIDDEN_ROLE`, 본문이 zod 를 통과 못 하면 400.
 
 ### POST `/api/plans/webhook`
 

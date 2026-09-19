@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { getServerActor } from "@/lib/auth";
+import { getFxRailState, todayUtc, type FxRailState } from "@/services/fx";
+import { getDb } from "@/lib/db/client";
 import { Nav } from "@/components/shell/Nav";
 import { Topbar } from "@/components/shell/Topbar";
 import "./globals.css";
@@ -13,6 +15,13 @@ export const metadata: Metadata = {
 export default async function RootLayout({ children }: { children: ReactNode }) {
   const { role } = await getServerActor();
 
+  let fx: FxRailState = { kind: "unavailable" };
+  try {
+    fx = await getFxRailState({ db: getDb() }, todayUtc());
+  } catch {
+    // getDb 의 env 오류 등 — unavailable 유지
+  }
+
   return (
     <html lang="ko">
       <head>
@@ -23,7 +32,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
         />
       </head>
       <body>
-        <Topbar role={role} />
+        <Topbar role={role} fx={fx} />
         <div className="shell">
           <Nav role={role} />
           <main className="main">{children}</main>

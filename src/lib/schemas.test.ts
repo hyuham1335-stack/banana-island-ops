@@ -3,6 +3,9 @@ import {
   ApproveInputSchema,
   ContentListQuerySchema,
   EditContentInputSchema,
+  FrankfurterLatestSchema,
+  FxQuerySchema,
+  ManualFxInputSchema,
   RejectInputSchema,
   SetRoleInputSchema,
   SheetPlanRowSchema,
@@ -345,5 +348,107 @@ describe("EditContentInputSchema", () => {
     const result = EditContentInputSchema.safeParse({ title: "  제목  ", body: "  본문  " });
     expect(result.success).toBe(true);
     if (result.success) expect(result.data).toEqual({ title: "제목", body: "본문" });
+  });
+});
+
+// 계약: FR-022(런 20260919-2343-1c04) 「데이터 형태 · ManualFxInput」·「유닛 · lib/schemas.ts ·
+// ManualFxInputSchema」. usdKrw·phpKrw 는 양의 십진 문자열(^\d+(\.\d{1,8})?$ 이고 값 > 0),
+// rateDate 는 형식 + 실존(2026-02-30 같은 값 거부).
+describe("ManualFxInputSchema", () => {
+  const VALID_INPUT = { rateDate: "2026-09-18", usdKrw: "1380.50000000", phpKrw: "24.60784314" };
+
+  it("유효한 입력은 통과한다", () => {
+    const result = ManualFxInputSchema.safeParse(VALID_INPUT);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data).toEqual(VALID_INPUT);
+  });
+
+  it("실존하지 않는 날짜(2026-02-30)는 거부한다", () => {
+    expect(ManualFxInputSchema.safeParse({ ...VALID_INPUT, rateDate: "2026-02-30" }).success).toBe(false);
+  });
+
+  it("rateDate 형식이 아니면(슬래시 구분) 거부한다", () => {
+    expect(ManualFxInputSchema.safeParse({ ...VALID_INPUT, rateDate: "2026/09/18" }).success).toBe(false);
+  });
+
+  it("usdKrw 가 '0' 이면 거부한다", () => {
+    expect(ManualFxInputSchema.safeParse({ ...VALID_INPUT, usdKrw: "0" }).success).toBe(false);
+  });
+
+  it("phpKrw 가 음수 문자열이면 거부한다", () => {
+    expect(ManualFxInputSchema.safeParse({ ...VALID_INPUT, phpKrw: "-1" }).success).toBe(false);
+  });
+
+  it("usdKrw 가 숫자가 아닌 문자열이면 거부한다", () => {
+    expect(ManualFxInputSchema.safeParse({ ...VALID_INPUT, usdKrw: "abc" }).success).toBe(false);
+  });
+
+  it("소수점 9자리(자릿수 초과)는 거부한다", () => {
+    expect(ManualFxInputSchema.safeParse({ ...VALID_INPUT, usdKrw: "1380.123456789" }).success).toBe(false);
+  });
+
+  it("필드가 하나라도 없으면 거부한다", () => {
+    const { phpKrw: _omit, ...rest } = VALID_INPUT;
+    expect(ManualFxInputSchema.safeParse(rest).success).toBe(false);
+  });
+});
+
+// 계약: FR-022 「데이터 형태 · FxQuery { date?: string }」·「유닛 · lib/schemas.ts · FxQuerySchema」
+describe("FxQuerySchema", () => {
+  it("date 없이(빈 객체) 통과한다", () => {
+    const result = FxQuerySchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data).toEqual({});
+  });
+
+  it("date 가 실존하는 날짜면 통과한다", () => {
+    const result = FxQuerySchema.safeParse({ date: "2026-09-18" });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data).toEqual({ date: "2026-09-18" });
+  });
+
+  it("date 가 실존하지 않는 날짜(2026-02-30)면 거부한다", () => {
+    expect(FxQuerySchema.safeParse({ date: "2026-02-30" }).success).toBe(false);
+  });
+
+  it("date 형식이 아니면(자릿수 부족) 거부한다", () => {
+    expect(FxQuerySchema.safeParse({ date: "26-9-18" }).success).toBe(false);
+  });
+});
+
+// 계약: FR-022 「데이터 형태 · FrankfurterLatest」·「유닛 · lib/schemas.ts · FrankfurterLatestSchema」
+// base 는 리터럴 "USD", 숫자는 z.number().finite().positive() — 여분 키(다른 통화)는 허용한다.
+describe("FrankfurterLatestSchema", () => {
+  const VALID = { base: "USD", date: "2026-09-18", rates: { KRW: 1380.5, PHP: 56.1 } };
+
+  it("유효한 응답은 통과한다", () => {
+    expect(FrankfurterLatestSchema.safeParse(VALID).success).toBe(true);
+  });
+
+  it("rates 에 다른 통화가 섞여도(여분 키) 통과한다", () => {
+    const result = FrankfurterLatestSchema.safeParse({ ...VALID, rates: { ...VALID.rates, EUR: 0.9 } });
+    expect(result.success).toBe(true);
+  });
+
+  it("base 가 'USD' 가 아니면 거부한다", () => {
+    expect(FrankfurterLatestSchema.safeParse({ ...VALID, base: "EUR" }).success).toBe(false);
+  });
+
+  it("rates.KRW 가 없으면 거부한다", () => {
+    const rates: Record<string, number> = { ...VALID.rates };
+    delete rates.KRW;
+    expect(FrankfurterLatestSchema.safeParse({ ...VALID, rates }).success).toBe(false);
+  });
+
+  it("rates.PHP 가 음수면 거부한다", () => {
+    expect(FrankfurterLatestSchema.safeParse({ ...VALID, rates: { ...VALID.rates, PHP: -1 } }).success).toBe(
+      false,
+    );
+  });
+
+  it("rates.PHP 가 0 이면 거부한다(양수만 허용)", () => {
+    expect(FrankfurterLatestSchema.safeParse({ ...VALID, rates: { ...VALID.rates, PHP: 0 } }).success).toBe(
+      false,
+    );
   });
 });

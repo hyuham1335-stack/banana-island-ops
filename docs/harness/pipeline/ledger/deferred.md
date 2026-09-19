@@ -2,7 +2,7 @@
 
 > 원장(`findings.jsonl`)의 **파생 뷰**이지 출처가 아니다. 08 이 매 런 통째로 다시 만든다 — 손으로 고치지 않는다 (ADR-H051). 옛 행은 `path` 가 없어 `(경로 미기재)` 한 버킷이다. 00 봉투가 요청 경로와 겹치는 건수를 표기한다.
 
-열린 `deferred` **89건** · 경로 8개
+열린 `deferred` **97건** · 경로 10개
 
 ## `src/app/api/plans/webhook/route.ts` — 1건
 
@@ -49,6 +49,24 @@
 | run_id | severity | category | 제목 | 리뷰어 |
 |---|---|---|---|---|
 | `20260919-2342-9258` | minor | TEST_MISSING_FAILURE_PATH | status 필터 단언이 조건을 평탄한 부분문자열로만 봐서 연산자를 잠그지 못하고 정당한 결합 조건에서는 거짓 실패한다 | test |
+
+## `src/lib/schemas.ts` — 6건
+
+| run_id | severity | category | 제목 | 리뷰어 |
+|---|---|---|---|---|
+| `20260919-2343-1c04` | minor | CONTRACT_MISMATCH | FrankfurterLatestSchema 의 date 가 YYYY-MM-DD 형식을 검증하지 않는다 | gen |
+| `20260919-2343-1c04` | minor | INPUT_VALIDATION | ManualFxInputSchema 십진 문자열에 정수부 자릿수 상한이 없어 numeric(18,8) 초과가 500 이 된다 | gen |
+| `20260919-2343-1c04` | minor | CONTRACT_MISMATCH | FrankfurterLatestSchema 가 응답 date 의 YYYY-MM-DD 형식을 검증하지 않는다 | data |
+| `20260919-2343-1c04` | minor | INPUT_VALIDATION | 수동 입력 스키마의 정수부 자릿수가 numeric(18,8) 상한을 넘을 수 있다 | data |
+| `20260919-2343-1c04` | minor | INPUT_VALIDATION | 환율 수치 스키마가 numeric(18,8) 범위를 보지 않아 범위 밖 값이 500 INTERNAL 로 떨어진다 | sec |
+| `20260919-2343-1c04` | minor | CONTRACT_MISMATCH | FrankfurterLatestSchema.date 가 YYYY-MM-DD 형식을 검증하지 않는다 | test |
+
+## `src/services/fx.ts` — 2건
+
+| run_id | severity | category | 제목 | 리뷰어 |
+|---|---|---|---|---|
+| `20260919-2343-1c04` | minor | CONTRACT_DEFECT | 크론 upsert 가 같은 rate_date 의 수동 입력 행을 조용히 덮어쓴다 | data |
+| `20260919-2343-1c04` | major | NAMING | 계약에 없는 public 심볼 Result 가 생겼다 |  |
 
 ## `(경로 미기재)` — 78건
 
