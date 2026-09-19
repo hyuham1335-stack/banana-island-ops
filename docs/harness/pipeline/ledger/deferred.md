@@ -2,7 +2,19 @@
 
 > 원장(`findings.jsonl`)의 **파생 뷰**이지 출처가 아니다. 08 이 매 런 통째로 다시 만든다 — 손으로 고치지 않는다 (ADR-H051). 옛 행은 `path` 가 없어 `(경로 미기재)` 한 버킷이다. 00 봉투가 요청 경로와 겹치는 건수를 표기한다.
 
-열린 `deferred` **86건** · 경로 6개
+열린 `deferred` **89건** · 경로 8개
+
+## `src/app/api/plans/webhook/route.ts` — 1건
+
+| run_id | severity | category | 제목 | 리뷰어 |
+|---|---|---|---|---|
+| `20260919-2343-d42d` | minor | OTHER | 웹훅 시크릿이 막는 동작을 무인가 /api/plans/sync 가 그대로 열어 두어, 시크릿은 접근 통제가 아니라 출처 라벨 보증에 그친다 | sec |
+
+## `src/services/plan-sync.ts` — 1건
+
+| run_id | severity | category | 제목 | 리뷰어 |
+|---|---|---|---|---|
+| `20260919-2343-d42d` | minor | CONCURRENCY | 웹훅이 자동 진입점이 되면서 syncPlansFromSheet 가 겹쳐 실행될 수 있고, 순서가 뒤집히면 최신 편집이 사라지거나 새 계획이 on_hold 된다 | data |
 
 ## `src/services/rules.ts` — 4건
 
@@ -38,7 +50,7 @@
 |---|---|---|---|---|
 | `20260919-2342-9258` | minor | TEST_MISSING_FAILURE_PATH | status 필터 단언이 조건을 평탄한 부분문자열로만 봐서 연산자를 잠그지 못하고 정당한 결합 조건에서는 거짓 실패한다 | test |
 
-## `(경로 미기재)` — 77건
+## `(경로 미기재)` — 78건
 
 | run_id | severity | category | 제목 | 리뷰어 |
 |---|---|---|---|---|
@@ -119,3 +131,4 @@
 | `20260917-0028-40dc` | minor | TX_BOUNDARY | INSERT 실패 시 보상 UPDATE(publish_plan_id 복구)가 4단계와 달리 가드 없이 무조건 쓴다 | data |
 | `20260917-0028-40dc` | minor | OTHER | 새 버전 제목이 항상 리터럴 " (v2)" 를 붙여 재-재생성 시 접미사가 중복된다 |  |
 | `20260917-0028-40dc` | minor | OTHER | ContentActions.tsx 조기 return null 가드가 상태 5종을 전부 나열해 도달 불가능한 죽은 코드가 됐다 |  |
+| `20260919-2343-d42d` | major | TEST_MISSING_FAILURE_PATH | 계약의 유닛 src/lib/db/schema.ts · importTriggerEnum 를 참조하는 테스트가 없다 |  |

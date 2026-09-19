@@ -242,6 +242,7 @@ export async function syncPlansFromSheet(
         failedRows: decision.errors.length,
         errors: decision.errors,
         executedBy: null,
+        trigger,
       })
       .returning({ id: importLogs.id });
     const importId = log.id;

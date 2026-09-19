@@ -108,6 +108,7 @@ export async function listPlans(
         totalRows: importLogs.totalRows,
         okRows: importLogs.okRows,
         failedRows: importLogs.failedRows,
+        trigger: importLogs.trigger,
       })
       .from(importLogs);
     lastSyncQuery.where(eq(importLogs.target, "publish_plans"));
@@ -140,8 +141,6 @@ export async function listPlans(
       };
     });
 
-    // import_logs 에 trigger 컬럼이 없다 — 유일한 진입점(POST /api/plans/sync)이 항상 수동 호출이라
-    // 'manual' 로 고정 응답한다(FR-002 계약, 02-cross-verify 채택 사항 F-6).
     const lastSync: ImportSummary | null = lastSyncRows[0]
       ? {
           id: lastSyncRows[0].id,
@@ -149,7 +148,7 @@ export async function listPlans(
           totalRows: lastSyncRows[0].totalRows,
           okRows: lastSyncRows[0].okRows,
           failedRows: lastSyncRows[0].failedRows,
-          trigger: "manual",
+          trigger: lastSyncRows[0].trigger,
         }
       : null;
 

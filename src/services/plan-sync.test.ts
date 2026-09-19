@@ -464,4 +464,46 @@ describe("syncPlansFromSheet", () => {
 
     expect(sheets.readRows).toHaveBeenCalledWith("Sheet1!A2:H");
   });
+
+  // 계약: _workspace/contract_should-fr024-sheet-webhook.md 「유닛 · src/services/plan-sync.ts」
+  it.each(["manual", "webhook"] as const)(
+    "import_logs insert values 의 trigger 에 인자 '%s' 가 그대로 실린다",
+    async (trigger) => {
+      const sheets = createSheetsMock([]);
+      const { db, insertCalls } = createDbMock({
+        channelsRows: [],
+        productsRows: [],
+        usersRows: [],
+        heldRows: [],
+        importLogId: 1,
+      });
+
+      await syncPlansFromSheet({ sheets, db }, trigger);
+
+      const importLogsInsert = insertCalls.find((c) => c.table === schema.importLogs);
+      expect(importLogsInsert).toBeDefined();
+      const valuesArgs = importLogsInsert?.calls.values?.[0];
+      expect(valuesArgs?.[0]).toMatchObject({ trigger });
+    },
+  );
+
+  it("publish_plans insert 의 onConflictDoUpdate 는 target: publishPlans.sheetRowKey 로 불린다", async () => {
+    const sheets = createSheetsMock([
+      ["PLAN-1", "2026-09-20", "채널A", "", "ko", "건강정보형", "주제", "김담당"],
+    ]);
+    const { db, insertCalls } = createDbMock({
+      channelsRows: [{ id: 1, name: "채널A" }],
+      productsRows: [],
+      usersRows: [{ id: 100, name: "김담당" }],
+      heldRows: [],
+      importLogId: 1,
+    });
+
+    await syncPlansFromSheet({ sheets, db }, "manual");
+
+    const publishPlansInsert = insertCalls.find((c) => c.table === schema.publishPlans);
+    expect(publishPlansInsert).toBeDefined();
+    const conflictArgs = publishPlansInsert?.calls.onConflictDoUpdate?.[0];
+    expect(conflictArgs?.[0]).toMatchObject({ target: schema.publishPlans.sheetRowKey });
+  });
 });
