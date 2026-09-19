@@ -3,7 +3,7 @@
   "title": "harness config",
   "description": "프로젝트 고유 지식이 사는 유일한 파일. 스크립트·페이즈 파일에는 고유명사를 남기지 않는다. scripts/harness.py 의 자체 검증기가 이 스키마를 해석하므로 아래 키워드만 쓴다: type · enum · required · properties · additionalProperties · items · minItems · minimum · maximum · pattern · $ref(로컬) · definitions · title · description. 인스턴스에서 밑줄(_)로 시작하는 키는 주석으로 보고 additionalProperties 검사에서 제외한다.",
   "type": "object",
-  "required": ["schema", "project", "adapter", "contract", "vcs", "roles", "primary_role"],
+  "required": ["schema", "project", "adapter", "contract", "vcs", "roles", "primary_role", "reviewers", "review"],
   "additionalProperties": false,
   "properties": {
     "schema": {
@@ -29,6 +29,13 @@
           "minimum": 0
         },
         "rules_dir": {"type": "string"},
+        "instruction_review": {
+          "description": "08 끝 지시문 검토 (ADR-H056). skill 은 메인이 부를 스킬 이름이고 불투명 문자열이다 — 존재를 검사하지 않는다. 스킬이 없는 환경은 null 로 두고 사람이 검토한다(비강등 gap instruction_review_manual). 끄는 스위치는 없다 — 열린 런의 08 은 늘 08_instruction_review.json 을 요구한다.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["skill"],
+          "properties": {"skill": {"type": ["string", "null"]}}
+        },
         "secret_files": {"type": "array", "items": {"type": "string"}},
         "source_inject_max_chars": {
           "description": "steps[].sources 로 프롬프트에 실을 소스 파일 합계의 상한(문자). 접두부는 모든 turn 에 곱해지므로 상한 없는 첨부는 개선이 아니라 악화다. 기본 60000.",
@@ -62,14 +69,16 @@
             "errors": {"type": "string"},
             "data_shapes": {"type": "string"},
             "schema": {"type": "string"},
-            "boundaries": {"type": "string"}
+            "boundaries": {"type": "string"},
+            "journeys": {"type": "string"},
+            "screens": {"type": "string"}
           }
         },
         "required": {
           "description": "계약 문서에 반드시 있어야 하는 절의 키.",
           "type": "array",
           "minItems": 1,
-          "items": {"type": "string", "enum": ["units", "entrypoints", "errors", "data_shapes", "schema", "boundaries"]}
+          "items": {"type": "string", "enum": ["units", "entrypoints", "errors", "data_shapes", "schema", "boundaries", "journeys", "screens"]}
         }
       }
     },
@@ -180,6 +189,12 @@
           "only_when_no_source_change": {
             "description": "참이면 소스 변경이 하나도 없는 런에서만 켜진다.",
             "type": "boolean"
+          },
+          "risk": {
+            "description": "이 리뷰어가 매칭되면 함의되는 01 INTENT 위험(ADR-H067). 매칭됐는데 INTENT 의 risk 가 이 중 하나도 안 적었으면 05 가 risk_undeclared 이벤트를 남긴다 — 관측만 하고 등급은 치르지 않는다. 어휘는 verdict.RISK_VOCAB 과 같다.",
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string", "enum": ["schema", "boundary", "concurrency", "authz"]}
           }
         }
       }
@@ -198,8 +213,20 @@
           "additionalProperties": false,
           "properties": {
             "docs": {"type": "integer", "minimum": 1},
+            "fix": {"type": "integer", "minimum": 1},
             "small": {"type": "integer", "minimum": 1},
             "normal": {"type": "integer", "minimum": 1}
+          }
+        },
+        "depth": {
+          "description": "레인별 리뷰 범위. `diff` 는 diff·계약·05_trace.json 만, `diff+refs` 는 계약 `## 유닛` 이 참조하는 기존 파일까지 리뷰어 패킷에 넣는다 — diff 밖 상호작용(낙관적 잠금·상태 가드)을 보기 위해서다 (FR-007 escaped). 봉투가 결정론으로 찍고 리뷰어는 고르지 않는다.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "docs": {"$ref": "#/definitions/review_depth"},
+            "fix": {"$ref": "#/definitions/review_depth"},
+            "small": {"$ref": "#/definitions/review_depth"},
+            "normal": {"$ref": "#/definitions/review_depth"}
           }
         },
         "findings_max": {
@@ -216,7 +243,7 @@
           }
         },
         "baseline_runs": {
-          "description": "오탐이 잦은 검사(untested_contract_item · out_of_contract)를 warn_only 로 두는 기간. 원장이 본 런 수로 센다.",
+          "description": "오탐이 잦은 검사(contract-trace 의 BASELINE_CHECKS)를 warn_only 로 두는 기간. 검사별로, 그 검사가 지적을 낸 런 수로 센다 (ADR-H058).",
           "type": "integer", "minimum": 0
         }
       }
@@ -278,6 +305,10 @@
       "type": "string",
       "enum": ["haiku", "sonnet", "opus", "inherit"]
     },
+    "review_depth": {
+      "type": "string",
+      "enum": ["diff", "diff+refs"]
+    },
     "model_slot": {
       "type": "object",
       "required": ["default"],
@@ -285,6 +316,7 @@
       "properties": {
         "default": {"$ref": "#/definitions/model_tier"},
         "docs": {"$ref": "#/definitions/model_tier"},
+        "fix": {"$ref": "#/definitions/model_tier"},
         "small": {"$ref": "#/definitions/model_tier"},
         "normal": {"$ref": "#/definitions/model_tier"}
       }
@@ -302,7 +334,11 @@
           "pattern": "^[a-z][a-z0-9]{0,7}$"
         },
         "owns": {"type": "array", "minItems": 1, "items": {"type": "string"}},
-        "excludes": {"type": "array", "items": {"type": "string"}}
+        "excludes": {"type": "array", "items": {"type": "string"}},
+        "when_contract_section": {
+          "description": "이 역할은 계약의 이 절(contract.sections 의 키)에 항목이 있는 런에서만 03 에 디스패치된다. 없으면 늘 디스패치된다. 03 이 계약 파서로 정하고 제출이 다시 계산해 대조한다 (ADR-H057).",
+          "type": "string"
+        }
       }
     }
   }

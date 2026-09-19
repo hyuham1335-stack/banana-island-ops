@@ -117,6 +117,9 @@ EVENT_KINDS = (
     # 빗나갔다(`triage_miss`). 둘을 뭉치면 임계값을 고칠 근거(어느 예측이
     # 얼마나 틀리나)가 원장에서 사라진다.
     "triage_decided", "triage_miss",
+    # 05 라우팅이 매칭한 리뷰어의 위험을 01 INTENT 의 `risk` 가 안 적었다.
+    # 게이트가 아니라 관측이다 — 오탐률을 본 뒤 승격을 정한다 (ADR-H067).
+    "risk_undeclared",
 )
 
 GRADES = ("PASS", "PASS_WITH_GAPS", "INCOMPLETE")
@@ -275,7 +278,8 @@ MODELS_BASIS = "instructed+reported"
 MODELS_BLIND_SPOTS = (
     "지시한 등급이 실제로 쓰였는지 실행기는 보지 못한다",
     "reported 는 리뷰어의 자진신고다 — 대조할 실측이 없다 (선택 필드라 빈 것이 보통이다)",
-    "inherit 는 메인 세션의 모델이고 그 값은 상태에 없다",
+    "inherit 로 지시된 키는 메인 세션의 모델이고 그 값은 상태에 없다",
+    "effort 는 에이전트 프론트매터의 정적 선언이고 실행기는 무엇이 돌았는지 보지 못한다 (ADR-H061)",
 )
 
 
@@ -472,6 +476,26 @@ def _parse_stamp(value):
     except ValueError:
         return None
 
+
+def session_touched_run(born, updated, start, end):
+    """이 세션이 그 런을 **만졌는가**. 판정할 수 없으면 `None` (M59).
+
+    귀속을 **한 시점**으로 보면 안 된다. 세션 창은 `[직전 원장 줄의 ts, 이
+    줄의 ts]` 이고 런 구간은 `[created_at, updated_at]` 이며, 둘은 서로를
+    가로지른다 — P8 은 17:20 에 시작해 다음날 01:08 에 닫혔고 세션 둘이
+    걸쳐 있어서 `updated_at` 만 보면 앞 세션이 통째로 빠진다.
+
+    `start` 가 `None` 인 것은 **판정 불가가 아니다** — 원장 첫 줄이라 앞
+    경계가 없을 뿐이고 창이 열려 있다. 판정 불가는 런의 구간을 모르는
+    경우(`born`·`updated` 부재)이고, 그때 `latest_only` 로 단정하면 못 잰
+    것이 "무관하다" 는 주장으로 바뀐다 ([[ADR-H007]]).
+
+    **쓰는 쪽(`session_log`)과 읽는 쪽(`cost-state`)이 같은 함수를 부른다.**
+    같은 식을 두 곳이 각자 쓰면 갈라지고, 그때 원장이 자기와 모순된다.
+    """
+    if born is None or updated is None or end is None:
+        return None
+    return born <= end and (start is None or updated > start)
 
 
 def phase_durations(paths):

@@ -21,12 +21,18 @@
      "schema": "claims"}
   ],
   "submit_checks": [
+    {"id": "dispatched_roles", "from": "config.roles[].when_contract_section",
+     "claims": "${run.dir}/03_claims.json", "on_fail": 8},
     {"id": "rules_read_sha", "from": "config.project.instruction_file",
      "and": "config.project.rules_dir", "claims": "${run.dir}/03_claims.json",
      "on_fail": 8},
     {"id": "clean_ownership", "from": "config.roles",
      "except": "config.main_owned_paths",
-     "claims": "${run.dir}/03_claims.json", "on_fail": 8}
+     "claims": "${run.dir}/03_claims.json", "on_fail": 8},
+    {"id": "tests_required", "from": "${run.contract_file}",
+     "unless": "state.contract.mode == \"no_contract\"", "on_fail": 8},
+    {"id": "journeys_runnable", "from": "${run.contract_file}",
+     "unless": "state.contract.mode == \"no_contract\"", "on_fail": 8}
   ],
   "gate": {"runner": "adapter", "fail_fast": true, "steps": [{"id": "compile"}]},
   "allow": {"agents": "config.roles[].agent", "parallel": true,
@@ -67,11 +73,27 @@
    `POST`·`maxDuration` 같은 이름은 어댑터 `implied_exports` 가 말하므로
    유닛에 다시 적지 않는다. 진입점 경로의 파라미터는 `{id}` 로 적어도
    어댑터 `param_styles` 가 실제 폴더명(`[id]`)으로 찾는다.
-2. 계약의 유닛·진입점 항목 수를 세어 프로파일을 확정한다.
-3. **역할 전원을 한 메시지 안에서 동시 호출한다.** 각 역할에게 지시문 패킷을
-   준다 — 패킷에 **소유권 표**가 들어 있고, 그 표가 소유 경계의 유일한 출처다.
-4. 각 역할의 제출물을 받아 `03_claims.json` 으로 합친다.
-5. 소유 검사와 컴파일 게이트를 돌린다.
+   **`## 여정` 은 어댑터에 e2e 스테이지가 있고, 이 런으로 PRD 유저 스토리 하나의 AC 가
+   전부 충족될 때만 1개다. 그 밖에는 "없음" 이다.** 형식은 유닛과 같은 `스펙 파일 · 여정
+   슬러그` 이고 들여쓴 줄에 진입점 절의 `METHOD /path` 를 글자 그대로 `→` 로 잇는다.
+   e2e 가 없으면 계약을 쓰라는 봉투가 그렇게 말하고, 그래도 적으면 패킷을 내기 전에
+   exit 8 이다 (ADR-H058 추기).
+   **`## 화면` 은 이 런이 화면 컴포넌트를 새로 만들거나 고칠 때만 적는다.** 그 밖에는
+   "없음" 이다. 형식은 유닛과 같은 `컨테이너 · 컴포넌트` 이고, 항목이 있어야 `ui` 역할이
+   불린다 (ADR-H057).
+2. 계약의 유닛·진입점·화면 항목 수를 세어 프로파일을 확정한다.
+3. **패킷의 「이 런에 부르는 역할」 전원을 한 메시지 안에서 동시 호출한다.** 목록은
+   계약이 정한다 — `when_contract_section` 이 있는 역할은 계약의 그 절에 항목이 있을
+   때만 들어간다. 각 역할에게 지시문 패킷을 준다 — 패킷에 **소유권 표**가 들어 있고,
+   그 표가 소유 경계의 유일한 출처다.
+4. 각 역할의 제출물을 받아 `03_claims.json` 으로 합친다. 역할은 **정확히 디스패치
+   목록**이다 — 빠지거나 더해지면 exit 8. 패킷을 받은 뒤 계약의 그 절을 고쳤으면
+   제출이 exit 8 이고 `next` 로 패킷을 다시 받는다 (ADR-H057).
+5. 소유 검사와 컴파일 게이트를 돌린다. 이어서 **테스트 존재 검사**(`tests_required` —
+   진입점·오류 어휘·`[역할]` 태그의 테스트)를 05 계약 대조와 같은 함수로 돌린다.
+   빠지면 첫 런부터 exit 8 이다 — 유예가 없다 (ADR-H058). 05 의 Major 는
+   수리 루프를 돌리지 않으므로 여기서 요구해야 고쳐진다. 목록은 패킷의
+   「게이트가 세는 테스트」 절이 계약에서 뽑아 준다 — 역할에게 그대로 넘긴다.
 
 ### docs 레인 — 역할 0명 (ADR-H044)
 
@@ -128,8 +150,16 @@
    "rules_read":[{"path":"CLAUDE.md","sha256":"…"}],
    "claimed_files":["…"],
    "contract_symbols_covered":["…"],
+   "blocked":[]},
+  {"role":"ui","agent":"…","status":"ok|blocked",
+   "rules_read":[{"path":"CLAUDE.md","sha256":"…"}],
+   "claimed_files":["…"],
+   "contract_symbols_implemented":["…"],
+   "ui_guide_checked":["…"],
    "blocked":[]}]}
 ```
+
+`ui` 항목은 디스패치된 런에만 넣는다 — 계약 `## 화면` 이 "없음" 이면 빼야 한다.
 
 `claimed_files` 에 **실제로 쓴 파일 전부**를 적는다. 빠뜨리면 그 파일이
 orphan(아무도 claim 하지 않은 변경)으로 잡혀 03 전체가 거부된다.
@@ -152,12 +182,16 @@ orphan(아무도 claim 하지 않은 변경)으로 잡혀 03 전체가 거부된
   `CONTRACT_DEFECT` 로 보고하면 메인이 고치고 델타를 다시 내린다
 - **커밋·푸시하지 마라.** 이유: 파이프라인이 지문을 잡는 시점이 정해져 있고,
   중간 커밋은 그 지문을 앞당겨 게이트 영수증을 어긋나게 한다
+- **러너 없는 여정을 적지 마라.** 이유: 돌지 않는 e2e 스펙은 test 소유라 소유 검사를
+  지나 PR 에 조용히 실린다. 도입은 프로젝트 ADR 로 어댑터 `e2e.cmd` 를 채운 뒤다
 
 ## 실패 시
 
 | 무엇 | 어떻게 |
 |---|---|
 | `rules_read` 누락·불일치 | exit 8 — 어느 역할의 어느 파일이 빠졌거나 낡았는지 봉투에 나온다. 해시는 안 준다 |
+| claims 역할 ≠ 디스패치 목록 | exit 8 — 빠진 역할·부르지 않은 역할이 봉투에 나온다 |
+| 패킷 뒤 계약의 조건부 절 변경 | exit 8 — `next` 로 패킷을 다시 받는다 |
 | 소유 경계 침범 | exit 8 — 어느 파일을 어느 역할이 되돌릴지 봉투에 나온다 |
 | orphan 파일 | exit 8 — claim 에 없는 변경이다. 적었거나 지웠어야 한다 |
 | 컴파일 실패 | 04 의 귀속 규칙으로 소유자를 정해 그 역할에게만 되돌린다 |

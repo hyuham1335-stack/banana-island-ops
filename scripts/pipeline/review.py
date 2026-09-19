@@ -31,7 +31,7 @@ import verdict  # noqa: E402
 
 SKILLS_REL = ".claude/skills"
 
-DEFAULT_CAPS = {"small": 1, "normal": 3}
+DEFAULT_CAPS = {"fix": 1, "small": 1, "normal": 3}
 DEFAULT_MERGE_BELOW = 150
 DEFAULT_FINDINGS_MAX = 50
 
@@ -131,6 +131,22 @@ def route(config, changed, profile="normal", source_globs=None):
         "profile": profile,
         "source_changed": source_changed,
     }
+
+
+def undeclared_risk(config, routed, risk):
+    """매칭됐는데 01 INTENT 의 `risk` 가 그 리뷰어의 위험을 하나도 안 적은 코드.
+
+    **관측만 한다** (ADR-H067). 상한에 걸려 빠진 리뷰어도 매칭이다 — 상한은
+    리뷰 예산이지 위험의 부재가 아니다. `risk` 가 `None`(INV 생략)이면 대조할
+    신고가 없다.
+    """
+    if risk is None:
+        return []
+    declared = {r["code"]: r.get("risk") for r in config.get("reviewers") or []}
+    matched = [r["code"] for r in (routed.get("reviewers") or [])
+               + (routed.get("dropped") or [])]
+    return [c for c in matched
+            if declared.get(c) and not set(declared[c]) & set(risk)]
 
 
 def _cap(config, profile):

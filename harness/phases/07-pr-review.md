@@ -34,13 +34,18 @@
 이 페이즈가 막는 실패는 하나다 — **"아무도 안 봤다"가 "통과"가 되는 것.**
 관측기를 **빼지 않고 바꾼다** (ADR-H043): 일반 정합성("구현이 계약대로
 동작하는가")은 05 의 `gen` 리뷰어가 소스 변경마다 보고, 07 의 내장 리뷰는
-**신호가 있는 런**에서만 돈다 — 05 가 `ok` 가 아니거나, 04·05 에서 수리가
-있었거나, Major 가 남았거나, 감사 런이다. 깨끗한 런은 `skipped` 이고 등급이
-내려가지 않는다. 봇을 켜 놓고 무응답이면 그것은 있어야 할 관측기가 없는
-것이라 여전히 gap 이고 내장 리뷰가 대신 돈다.
+**신호가 있는 런**에서만 돈다 — 05 가 `ok` 가 아니거나, 00 의 예측이 빗나갔거나,
+05 의 지적이 0건이거나, 감사 런이다. **"Major 가 남았다" · "04·05 에 수리가
+있었다" 는 신호가 아니다** (ADR-H059) — 05 는 매 런 Major 를 내므로 그 둘은
+파일럿 11런 중 9런에서 07 을 강제했고, 그 Major 는 05 안에서 수리·델타
+재리뷰를 이미 받은 것이었다. 두 번째 눈의 표본은 감사 런이 산다. 그 밖의 런은
+`skipped` 이고 등급이 내려가지 않는다. 봇을 켜 놓고 무응답이면 그것은 있어야
+할 관측기가 없는 것이라 여전히 gap 이고 내장 리뷰가 대신 돈다.
 
 **`docs` 레인은 `docs_profile` 로 생략한다** — 소스 변경이 없고 05 의 docs
-리뷰어가 봤으니 내장 코드 리뷰가 볼 코드가 없다. **00 의 예측이 빗나간 런
+리뷰어가 봤으니 내장 코드 리뷰가 볼 코드가 없다. **`fix` 레인은 `fix_profile`
+로 생략한다** — 05 의 `gen` 이 수리 하나를 봤다. 단 05 의 지적이 0건이면 low 로
+한 번 돈다 (ADR-H050 · ADR-H053). **00 의 예측이 빗나간 런
 (`profile.triage_miss`)은 `medium` 이다** — 앞 페이즈가 양보를 적용한 채
 지나갔으므로 건너뛴 관측을 비싼 쪽으로 메운다 (ADR-H044). gap 은 miss 시점에
 이미 적혔고 여기서 다시 세지 않는다.
@@ -66,7 +71,7 @@ diff 에 규칙 문서 변경이 섞이지 않는다.
 4. /code-review          모델               3번이 부르라고 하면 그 effort 로
 5. record --phase 07     제출               정규화 · dedup · escaped_05
 6. promote --scan        정적 · 무료        후보 0 이면 모델 없이 종결
-7. promote --apply       git                별도 브랜치 · 베이스라인을 기계가 잰다
+7. promote --apply       git · 스테이지         별도 브랜치 · 베이스라인과 자체 게이트를 기계가 잰다
 8. 코멘트 게시           너 · forge 도구    단일 코멘트 하나 · mask 를 거친다
 ```
 
@@ -97,18 +102,23 @@ python scripts/pipeline/cli.py review07 --external {07_external.json} --run-id {
 
 - `review05.status != ok` → **medium** (리뷰 결손을 비싼 쪽으로 메운다)
 - 봇을 켜 놓았는데 `timeout` · `not_a_review` → **low** + 등급 `PASS_WITH_GAPS`
-- 외부 Major 가 있거나 05 에 Major 가 남았다 → **low**
-- 04·05 에서 수리가 있었다 (`repair` · `review_repair` 의 `gate_failure` ·
-  `review_blocking` 소모) → **low**. 고친 코드는 두 번째 눈을 받는다. 형식
-  반려(`format_reject`)는 수리가 아니라 세지 않는다
-- 그 밖 → **skipped** (`skip_reason: clean_05`). 봇이 config 로 꺼진
+- 00 의 예측이 빗나갔다 (`profile.triage_miss`) → **medium**
+- `docs` 레인 → **skipped** (`docs_profile`) · `fix` 레인 → **skipped**
+  (`fix_profile`, 단 05 지적 0건이면 low)
+- 외부가 `reviewed` 이고 `small` 레인 → **skipped** (`clean_05`)
+- 외부 리뷰에 Major 가 있다 → **low**
+- 05 의 지적이 0건이다 → **low**. 0 은 "봤는데 없었다" 와 "보지 않았다" 를
+  가르지 못한다 (ADR-H050)
+- 그 밖 → **skipped** (`skip_reason: clean_05`). 05 에 Major 가 남았거나
+  04·05 에 수리가 있었어도 같다 — 그 Major 는 05 안에서 수리·델타 재리뷰를
+  이미 받았고, 두 번째 눈은 감사 런이 산다 (ADR-H059). 봇이 config 로 꺼진
   `disabled` 여도 성립한다 — 일반 정합성은 05 의 `gen` 이 봤다 (ADR-H043).
   등급이 내려가지 않는다. **`/code-review` 를 부르지 말고** `07_pr_review.json`
   을 `code_review: "skipped"` · findings 빈 배열로 내고 바로 `record` 로 간다 —
   5~8번은 그대로 돈다
-- `audit_run` — 5런마다 1회, 생략 조건을 만족해도 medium 을 강제한다.
+- `audit_run` — 5런마다 1회, 생략 조건을 만족해도 **high** 를 강제한다.
   **생략하면 `escaped_05` 를 셀 수 없기 때문**이고, 5런에 1회의 비용으로
-  정책의 근거를 산다 (§E2)
+  정책의 근거를 산다 (§E2). 표본이라 낮은 effort 는 과소측정이다 (ADR-H061)
 
 ### 6·7번 — 승격은 런당 한 번이고, 대개 아무 일도 없다
 
@@ -120,19 +130,34 @@ python scripts/pipeline/cli.py promote --scan --run-id {run_id}
 경로다 — 원장이 비어 있고 임계값(critical 2회 · major 3회 · minor 5회, 전부
 `distinct_runs` 조건과 함께)에 닿을 표본이 아직 없다.
 
-후보가 있으면 판정(`create` / `amend` / `skip`)을 **기록으로 남긴다.**
-`duplicate` 면 `create` 가 금지되고, `contradicts` 면 자동 쓰기가 차단되며
-에스컬레이션이다. **"일단 붙이기"가 선택지에 없다.**
+후보가 있으면 판정(`create` / `amend` / `skip` / `retire`)을 **기록으로
+남긴다.** `duplicate` 면 `create` 가 금지되고, `contradicts` 면 자동 쓰기가
+차단되며 에스컬레이션이다. **"일단 붙이기"가 선택지에 없다.**
+
+**후보는 기계 강제(`lint`·`check`) 목적지뿐이다** (ADR-H056). 스캔이 함께 찍는
+「지시문 검토 후보」(prose)는 여기서 판정하지 않는다 — 08 지시문 검토로 간다.
+「검사 반복 검출」은 `contract-trace` 가 이미 막는 규칙이라 후보가 아니다.
+근본 원인을 하네스에서 고친 규칙은 어느 쪽이든 `action: retire` + `rule_key` +
+`retired_reason` 으로 관측을 끊는다 — 이후 관측은 0 부터 다시 센다.
 
 **`skip` 에는 `rationale` 이 필수다** — 비면 exit 8 (ADR-H051). 그리고
 승격 판정 시한(원장이 본 런 ≥ 9, ADR-H033)이 지난 뒤에도 후보를 `skip` 으로
 닫으면 `promote --flush` 가 gap `promotion_overdue` 로 등급을 내린다 — 시한은
 더 이상 표시만이 아니다. 판정하거나 임계를 고친다.
 
-`--apply` 는 **규칙 전용 브랜치**에서 돈다. 자체 게이트(`lint` + `check`)가
-실패하면 브랜치를 폐기하고 `rejected` + 사유를 남긴다 — **기능 PR 은 영향받지
-않는다.** 자체 게이트는 **네가 그 브랜치에서 돌린다** — 실행기가 강제하지
-않는다.
+`--apply` 는 **규칙 전용 브랜치**에서 돈다 — 규칙 파일을 그 브랜치에 쓴 뒤
+부른다. **브랜치를 만들고 폐기하는 것은 실행기 밖이고 네 일이다.** 자체
+게이트(`lint` + `check`)는 **실행기가 돌린다** (ADR-H065) — `--apply` 가 어댑터의
+두 스테이지를 **현재 워크트리에서** 돌리고, 하나라도 0 이 아니면 기계 강제
+승격을 전부 `rejected` + 사유로 적는다. 그때 브랜치를 폐기한다 — **기능 PR 은
+영향받지 않는다.** 규칙 전용 브랜치가 아닌 곳에서 부르면 게이트는 기능 코드와
+규칙을 함께 잰다 — 실행기는 그것을 구분하지 못한다.
+
+- 여기서는 **종료 코드가 성패다** — 베이스라인과 다르다
+- 실행 자체가 불가능했으면(127 · 124) `infra` 이고 **exit 10**, 아무것도 안 쓴다
+- 어댑터에 `lint` · `check` 명령이 없으면 막지 않고 갭
+  `promotion_selfgate_unverified` 로 등급이 내려간다
+- 문서 승격 · `retire` · `skip` 만 있으면 게이트를 돌리지 않는다
 
 **`lint` 승격의 베이스라인은 실행기가 직접 잰다.** `--apply` 가 어댑터의
 `baseline_cmd` 를 돌리고 `baseline_file` 의 VCS 변화를 본다. 네가 미리 돌릴
@@ -173,7 +198,7 @@ finding 은 **05 와 같은 스키마**를 쓴다 — **`rule_slug` 규칙도 �
 
 ```json
 {"external": {"status": "reviewed|disabled|not_a_review|timeout", "major": 0},
- "code_review": "skipped|low|medium",
+ "code_review": "skipped|low|medium|high",
  "findings": [
    {"id": "G-1", "category": "AUTHZ_MISSING_RULE", "severity": "major",
     "target_role": "impl", "title": "…", "path": "…", "line": 34,
@@ -240,7 +265,8 @@ finding 은 **05 와 같은 스키마**를 쓴다 — **`rule_slug` 규칙도 �
 | 변경 요청 미해결 | 차단 | 수리 루프(`pr_repair`). 초과 시 에스컬레이션 |
 | 타임아웃 후 외부 리뷰 도착 | — | 08 직전 재확인에서 **등급 강등.** 수리 루프로 되돌아가지 않는다 (무한 대기) |
 | 코멘트 게시 실패 | infra | 2회 재시도 → **비차단 스킵**. findings 는 원장에 남는다 |
-| 승격 자체 게이트 실패 · push 실패 | 판단 | 브랜치 폐기 + `rejected` + 사유. **기능 PR 무영향** |
+| 승격 자체 게이트 실패 | 기계 | `--apply` 가 `rejected` + 사유를 쓴다. 너는 브랜치를 폐기한다. **기능 PR 무영향** |
+| 승격 push 실패 | 판단 | 브랜치 폐기 + `rejected` + 사유. **기능 PR 무영향** |
 | `lint` 승격인데 **기계가 잰** 베이스라인이 그대로 | 판단 | "아무것도 안 막는 규칙" → `rejected` + 사유 |
 | `baseline_cmd` 를 실행하지 못함 (127 · 124) | infra | **exit 10.** 아무것도 쓰지 않는다 — 시스템 문제를 "규칙이 아무것도 안 막는다" 로 적지 않는다 |
 | 어댑터에 `baseline_cmd` 가 없음 | — | 막지 않고 통과시키되 갭 `promotion_baseline_unverified` + `PASS_WITH_GAPS`. **스킵은 통과가 아니다** |
