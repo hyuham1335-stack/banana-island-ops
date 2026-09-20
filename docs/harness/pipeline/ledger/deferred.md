@@ -2,7 +2,7 @@
 
 > 원장(`findings.jsonl`)의 **파생 뷰**이지 출처가 아니다. 08 이 매 런 통째로 다시 만든다 — 손으로 고치지 않는다 (ADR-H051). 옛 행은 `path` 가 없어 `(경로 미기재)` 한 버킷이다. 00 봉투가 요청 경로와 겹치는 건수를 표기한다.
 
-열린 `deferred` **97건** · 경로 10개
+열린 `deferred` **111건** · 경로 17개
 
 ## `src/app/api/plans/webhook/route.ts` — 1건
 
@@ -50,7 +50,7 @@
 |---|---|---|---|---|
 | `20260919-2342-9258` | minor | TEST_MISSING_FAILURE_PATH | status 필터 단언이 조건을 평탄한 부분문자열로만 봐서 연산자를 잠그지 못하고 정당한 결합 조건에서는 거짓 실패한다 | test |
 
-## `src/lib/schemas.ts` — 6건
+## `src/lib/schemas.ts` — 8건
 
 | run_id | severity | category | 제목 | 리뷰어 |
 |---|---|---|---|---|
@@ -60,6 +60,8 @@
 | `20260919-2343-1c04` | minor | INPUT_VALIDATION | 수동 입력 스키마의 정수부 자릿수가 numeric(18,8) 상한을 넘을 수 있다 | data |
 | `20260919-2343-1c04` | minor | INPUT_VALIDATION | 환율 수치 스키마가 numeric(18,8) 범위를 보지 않아 범위 밖 값이 500 INTERNAL 로 떨어진다 | sec |
 | `20260919-2343-1c04` | minor | CONTRACT_MISMATCH | FrankfurterLatestSchema.date 가 YYYY-MM-DD 형식을 검증하지 않는다 | test |
+| `20260920-0107-4265` | minor | INPUT_VALIDATION | batchQty 상한 없음 — integer 범위 초과가 400 이 아니라 500 INTERNAL | gen |
+| `20260920-0107-4265` | minor | INPUT_VALIDATION | batchQty 에 int4 상한이 없어 범위를 넘는 입력이 400 이 아니라 500 이 된다 | data |
 
 ## `src/services/fx.ts` — 2건
 
@@ -67,6 +69,53 @@
 |---|---|---|---|---|
 | `20260919-2343-1c04` | minor | CONTRACT_DEFECT | 크론 upsert 가 같은 rate_date 의 수동 입력 행을 조용히 덮어쓴다 | data |
 | `20260919-2343-1c04` | major | NAMING | 계약에 없는 public 심볼 Result 가 생겼다 |  |
+
+## `src/app/api/cost-sheets/[id]/route.ts` — 1건
+
+| run_id | severity | category | 제목 | 리뷰어 |
+|---|---|---|---|---|
+| `20260920-0107-4265` | minor | INPUT_VALIDATION | 경로 id·batchQty·productId 에 상한이 없어 범위 초과 입력이 400 이 아니라 500 INTERNAL 이 된다 | sec |
+
+## `src/app/costsheet/page.tsx` — 2건
+
+| run_id | severity | category | 제목 | 리뷰어 |
+|---|---|---|---|---|
+| `20260920-0107-4265` | minor | CONTRACT_MISMATCH | 확정일을 UTC 날짜로 표시해 KST 오전 확정본이 하루 전 날짜로 보임 | gen |
+| `20260920-0107-4265` | major | NAMING | 계약에 없는 public 심볼 dynamic 가 생겼다 |  |
+
+## `src/services/cost.ts` — 4건
+
+| run_id | severity | category | 제목 | 리뷰어 |
+|---|---|---|---|---|
+| `20260920-0107-4265` | minor | OTHER | confirmCostSheet 가 returning 으로 받은 시트 행을 버리고 같은 행을 다시 select 한다 | data |
+| `20260920-0107-4265` | minor | OTHER | 복제 insert-select 에 ORDER BY 가 없어 복제본 항목 순서가 원본과 달라질 수 있다 | data |
+| `20260920-0107-4265` | minor | RESPONSE_SHAPE | 쓰기 후 재조회가 null 이면 폴백이 저장된 사실과 다른 시트나 data null 을 돌려준다 | data |
+| `20260920-0107-4265` | major | NAMING | 계약에 없는 public 심볼 Result 가 생겼다 |  |
+
+## `src/services/cost.test.ts` — 2건
+
+| run_id | severity | category | 제목 | 리뷰어 |
+|---|---|---|---|---|
+| `20260920-0107-4265` | minor | TEST_MISSING_FAILURE_PATH | INTERNAL 실패 경로가 각 서비스의 첫 DB 호출에서만 주입된다 | test |
+| `20260920-0107-4265` | minor | TEST_MISSING_FAILURE_PATH | loadCostSheetPage 의 summary 대상 시트와 getFxRailState 인자가 잠기지 않았다 | test |
+
+## `src/app/api/cost-sheets/route.test.ts` — 1건
+
+| run_id | severity | category | 제목 | 리뷰어 |
+|---|---|---|---|---|
+| `20260920-0107-4265` | minor | TEST_MISSING_FAILURE_PATH | 라우트 403 테스트가 getDb 미호출을 단언하지 않는다 | test |
+
+## `src/lib/schemas.test.ts` — 1건
+
+| run_id | severity | category | 제목 | 리뷰어 |
+|---|---|---|---|---|
+| `20260920-0107-4265` | minor | TEST_MISSING_FAILURE_PATH | CostItemInputSchema costKind 100자 상한 경계가 검증되지 않는다 | test |
+
+## `src/lib/cost-sheet-view.ts` — 1건
+
+| run_id | severity | category | 제목 | 리뷰어 |
+|---|---|---|---|---|
+| `20260920-0107-4265` | major | NAMING | 계약에 없는 public 심볼 UpdateCostSheetPayloadItem 가 생겼다 |  |
 
 ## `(경로 미기재)` — 78건
 

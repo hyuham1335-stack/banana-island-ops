@@ -318,3 +318,61 @@ export const FxQuerySchema = z.object({
 });
 
 export type FxQuery = z.infer<typeof FxQuerySchema>;
+
+/**
+ * FR-020 원가표 CRUD·확정·복제 — 계약(run 20260920-0107-4265).
+ */
+
+// 01 F-6: 항목 0~100개 상한 — docs/API_SPEC.md 에 이미 반영됨.
+export const MAX_COST_ITEMS = 100;
+
+export const CostItemInputSchema = z
+  .object({
+    stage: z.enum(["ph", "kr", "us"]),
+    costKind: z.string().trim().min(1).max(100),
+    amount: z.string().regex(/^\d{1,10}(\.\d{1,4})?$/, "숫자 형식이 올바르지 않습니다."),
+    currency: z.enum(["KRW", "PHP", "USD"]),
+    basis: z.enum(["per_unit", "per_batch"]),
+    batchQty: z.number().int().min(1).nullable(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.basis === "per_batch" && data.batchQty === null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["batchQty"],
+        message: "배치 산정 기준은 배치 수량이 필요합니다.",
+      });
+    }
+    if (data.basis === "per_unit" && data.batchQty !== null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["batchQty"],
+        message: "개당 산정 기준은 배치 수량을 받지 않습니다.",
+      });
+    }
+  });
+
+export type CostItemInput = z.infer<typeof CostItemInputSchema>;
+
+export const CreateCostSheetInputSchema = z.object({
+  productId: z.number().int().positive(),
+  distributionRoute: z.enum(["kr_domestic", "us_export", "ph_local"]),
+  name: z.string().trim().min(1).max(100),
+  cloneFromId: z.number().int().positive().optional(),
+});
+
+export type CreateCostSheetInput = z.infer<typeof CreateCostSheetInputSchema>;
+
+export const UpdateCostSheetInputSchema = z.object({
+  name: z.string().trim().min(1).max(100).optional(),
+  items: z.array(CostItemInputSchema).max(MAX_COST_ITEMS),
+});
+
+export type UpdateCostSheetInput = z.infer<typeof UpdateCostSheetInputSchema>;
+
+export const CostSheetListQuerySchema = z.object({
+  productId: z.coerce.number().int().positive().optional(),
+  distributionRoute: z.enum(["kr_domestic", "us_export", "ph_local"]).optional(),
+});
+
+export type CostSheetListQuery = z.infer<typeof CostSheetListQuerySchema>;
