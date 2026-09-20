@@ -116,32 +116,40 @@
 
 | # | 예측 | 기준선 · 근거 | 볼 곳 | 결과 |
 |---|---|---|---|---|
-| 1 | 등급은 `PASS_WITH_GAPS` 이고 gap 은 `stage_absent:e2e` · `stage_absent:docs` 둘이 전부 — `adapter_unverified` 는 사라진다 | 완주한 11런 모두 이 둘 + `adapter_unverified` 를 가짐 (`e9d6` 은 미완주). 어댑터는 런 전에 `verified: true` 로 올렸다 | `state.gaps` | |
-| 2 | 테스트 파일이 바뀌면 `test` 리뷰어는 떨어지지 않는다. 다섯이 다 매칭되면 `routing.dropped` 는 `[arch]` | 직전 12런 중 10런이 `test` 를 떨어뜨림 (ADR-H062) | 05 `routing.dropped` | |
-| 3 | `src/services/**` 를 건드리면 `data` 가 매칭되고, 01 의 `risk` 에 `schema`·`boundary` 가 없으면 `risk_undeclared: ["data"]` 가 남는다 | 기준선 없음 — 새 관측 (ADR-H067) | 이벤트 `risk_undeclared` · 05 노드 | |
-| 4 | `risk` 가 비지 않아 02 는 돈다 (`no_risk` 생략 안 됨) | 직전 12런 모두 02 가 돌았음 (xv primary 11 · fallback 1) | 02 `status` · 생략 사유 | |
-| 5 | `precheck` 가 **파일 수로** exit 9 를 내지 않는다 | 직전 at_05 파일 수 6~23, 10 초과 6런 — 테스트 포함 셈 (ADR-H066) | `precheck.budget` · `test_files_excluded` | |
-| 6 | `budget.model_calls.total` 은 12~20 이고 상한 24 안 | 완주 11런 9~19 (중앙 12). 05 수리가 이제 계수에 들어가 늘 수 있다 (ADR-H064) | `budget.model_calls` | |
-| 7 | 04 수리 ≤ 1회 · 05 수리(`review_repair`) ≤ 2회 — 작성자가 전 레인 sonnet 이어도 | 직전 04 수리 0~2 · 05 수리 0~2 (ADR-H061) | `counters.repair` · `counters.review_repair` · `state.models.instructed` | |
-| 8 | 요청이 화면을 건드리면 계약에 `## 화면` 이 생기고 03 이 `ui-writer` 를 부른다. `src/components/**` 변경이 impl 소유 위반으로 걸리지 않는다 | 새 역할 — 기준선 없음 (ADR-H057) | 03 디스패치 · 소유 검사 | |
-| 9 | 런 비용 — **예측하지 않는다.** 첫 값이 기준선이다. 세션을 닫은 뒤 `cli.py cost` 로 잰다 | 원장이 이 런부터 쌓임 | `cli.py cost --run-id` | |
+| 1 | 등급은 `PASS_WITH_GAPS` 이고 gap 은 `stage_absent:e2e` · `stage_absent:docs` 둘이 전부 — `adapter_unverified` 는 사라진다 | 완주한 11런 모두 이 둘 + `adapter_unverified` 를 가짐 (`e9d6` 은 미완주). 어댑터는 런 전에 `verified: true` 로 올렸다 | `state.gaps` | **부분 적중.** 등급은 4/4 `PASS_WITH_GAPS` · `adapter_unverified` 소멸 확인. 그러나 「둘이 전부」가 틀렸다 — `docs` 는 `stage_absent` 가 아니라 `stage_na` 이고, 예측에 없던 `instruction_slot_over_budget` 이 **4/4 런**에 붙었다. P2 는 +`instruction_changed`, P3 는 +`triage_miss:01:max_rounds=2` (gap 3~4개) |
+| 2 | 테스트 파일이 바뀌면 `test` 리뷰어는 떨어지지 않는다. 다섯이 다 매칭되면 `routing.dropped` 는 `[arch]` | 직전 12런 중 10런이 `test` 를 떨어뜨림 (ADR-H062) | 05 `routing.dropped` | **적중.** `test` 는 4/4 런 실행. `dropped: [arch]` 는 P3·P4·P5 셋에서 그대로. P2 는 `dropped: []` 인데 반례가 아니다 — `sec` 이 매칭되지 않아 `planned` 가 `[gen, data, test, arch]` 넷뿐이었다(상한이 아니라 매칭이 이유) |
+| 3 | `src/services/**` 를 건드리면 `data` 가 매칭되고, 01 의 `risk` 에 `schema`·`boundary` 가 없으면 `risk_undeclared: ["data"]` 가 남는다 | 기준선 없음 — 새 관측 (ADR-H067) | 이벤트 `risk_undeclared` · 05 노드 | **적중 (2/4런).** P2 `{reviewers:["data"], declared:[]}` · P5 `{reviewers:["data"], declared:["concurrency","authz"]}`. P3·P4 에서는 나지 않았다 |
+| 4 | `risk` 가 비지 않아 02 는 돈다 (`no_risk` 생략 안 됨) | 직전 12런 모두 02 가 돌았음 (xv primary 11 · fallback 1) | 02 `status` · 생략 사유 | **빗나감 (3/4).** P3·P4·P5 는 `mode: primary` 로 돌았으나 **P2 는 `skip_reason: "no_risk"` 로 생략**됐다 ([ADR-H060](DECISIONS.md) 이 연 경로가 실물에서 처음 탔다) |
+| 5 | `precheck` 가 **파일 수로** exit 9 를 내지 않는다 | 직전 at_05 파일 수 6~23, 10 초과 6런 — 테스트 포함 셈 (ADR-H066) | `precheck.budget` · `test_files_excluded` | **빗나감.** **4런 중 3런이 exit 9** — `at_05` 파일 12·13·13, `at_06` 13·14·14. [ADR-H066](DECISIONS.md) 으로 테스트를 뺀 뒤에도 `files_max` 10 을 넘는다. exit 0 은 P2(8·9) 하나뿐 |
+| 6 | `budget.model_calls.total` 은 12~20 이고 상한 24 안 | 완주 11런 9~19 (중앙 12). 05 수리가 이제 계수에 들어가 늘 수 있다 (ADR-H064) | `budget.model_calls` | **부분 적중.** 11 · 16 · 10 · 17 — 상한 24 안은 맞고, 범위 12~20 은 **아래로 두 번 벗어났다**(P2 11 · P3 10). 편차의 축은 05 다: 6 · 10 · 4 · 11 (총 54 중 31 = **57%**) |
+| 7 | 04 수리 ≤ 1회 · 05 수리(`review_repair`) ≤ 2회 — 작성자가 전 레인 sonnet 이어도 | 직전 04 수리 0~2 · 05 수리 0~2 (ADR-H061) | `counters.repair` · `counters.review_repair` · `state.models.instructed` | **05 는 적중, 04 는 빗나감.** `review_repair` 1 · 2 · 0 · 2 (≤2). `repair` 는 P5 에서 **2회**(`gate_failure` ×2) — 그 두 번이 D-8 의 오배정 라운드다 |
+| 8 | 요청이 화면을 건드리면 계약에 `## 화면` 이 생기고 03 이 `ui-writer` 를 부른다. `src/components/**` 변경이 impl 소유 위반으로 걸리지 않는다 | 새 역할 — 기준선 없음 (ADR-H057) | 03 디스패치 · 소유 검사 | **적중.** 화면이 있는 P2·P4·P5 는 `dispatched_roles: ["impl","test","ui"]`, 없는 P3 는 `["impl","test"]`. 소유 위반 0건 |
+| 9 | 런 비용 — **예측하지 않는다.** 첫 값이 기준선이다. 세션을 닫은 뒤 `cli.py cost` 로 잰다 | 원장이 이 런부터 쌓임 | `cli.py cost --run-id` | **미측정으로 남는다.** 세션 원장이 worktree 런을 main 에서 못 찾아 `model_calls: 1` 로 잡았다 — [ADR-H068](DECISIONS.md) 로 수리했으나 **이 4런의 값은 재측정하지 않았다.** 토큰·달러는 어디에도 기록되지 않는다 |
+
+**채점 (2026-09-20, P2~P5 4런 뒤).** 9개 중 온전한 적중 3(2·3·8) · 부분 3(1·6·7) ·
+빗나감 2(4·5) · 미측정 1(9). **예측을 런 전에 적었기 때문에 이 표가 사후 합리화가 아니라
+채점으로 남는다** — 특히 5번은 「안 난다」고 적었는데 3/4런에서 났고, 4번은 「돈다」고 적었는데
+한 런이 생략됐다. 둘 다 예측 문구는 고치지 않았다.
 
 ### 막힌 지점 · 수동 개입
 
-미측정
+해당 없음 — 이 절은 런이 아니라 예측 초안이다.
 
 ### 이 런이 연 하네스 결함
 
 | ID | 무엇 | 상태 |
 |---|---|---|
+| — | 해당 없음 — 결함은 P2~P5 의 각 절에 적는다 | |
 
 ### 이 런이 승격 판단에 주는 답
 
-미측정
+예측 9개의 채점이 곧 답이다. ROADMAP §7 의 열린 질문 중 **2 · 4 · 5 · 7** 이 이 표에서
+표본을 받았다 — 자세한 것은 아래 「4런 교차 분석」.
 
 ### 다음 런에서 볼 것
 
-미측정
+빗나간 4 · 5 를 다음 런의 예측으로 다시 적는다. 특히 **5번(`files_max`)은 값을 바꾸거나
+예측을 바꿔야 한다** — 3/4런이 넘는 상한은 상한이 아니라 통행료다.
 
 ## 파이프라인 런 P2 — `fr-025-brand-rules-screen` (2026-09-20)
 
@@ -151,7 +159,7 @@
 | 런 ID | `_workspace/runs/20260919-2342-9258` |
 | 브랜치 | `feat-fr-025-brand-rules-screen` |
 | 대상 | 런 보고서 `docs\harness\pipeline\runs\20260919-2342-9258.md` 의 계약 절을 본다 (계약은 06 에서 지워진다) |
-| 어댑터 | `nextjs-ts` (`verified: true`) |
+| 어댑터 | `nextjs-ts` (`verified: false`) — **런 당시 표기는 `true` 였고 그것이 틀렸다.** [ADR-H069](DECISIONS.md) 가 근거 없이 올라간 값을 되돌렸다(귀속 규칙 4종이 19런 동안 판정 0/4). 어댑터 파일의 현재 값도 `false` 다 |
 | 결과 | PASS_WITH_GAPS · gaps 3 (stage_absent:e2e, stage_na:docs, instruction_slot_over_budget) |
 | 머신 | 미측정 |
 
@@ -171,7 +179,9 @@
 
 ### 이 런이 확인하기로 했던 것 — 그리고 결과
 
-미측정 — 런 전에 적은 예측이 상태에 없다. 런 보고서 `docs\harness\pipeline\runs\20260919-2342-9258.md` 의 서술을 본다.
+**런별** 예측은 상태에 없다 — 런 보고서 `docs\harness\pipeline\runs\20260919-2342-9258.md` 의 서술을 본다.
+
+**런 전 예측은 있다.** 위 P1 절(예측 초안 2026-09-19)의 9개 예측이 이 런을 포함한 4런으로 채점됐다. 이 런이 그 표의 어느 칸을 움직였는지는 P1 의 「결과」 열과 아래 「4런 교차 분석」에 있다.
 
 ### 막힌 지점 · 수동 개입
 
@@ -181,17 +191,23 @@
 
 | ID | 무엇 | 상태 |
 |---|---|---|
-| — | 미측정 — 사람이 적는다 | |
+| D-2 | `out_of_contract` 가 `src/app/rules/page.tsx` 의 `export const dynamic` 을 **major** 로 잡았다. Next.js route segment config 이고 `implied_exports` 에도 이름이 있는데, 면제가 `src/app/api/**/route.ts` 에만 걸려 page 에서는 안 걸린다. **면제 자체는 작동한다** — 이 4런이 만든 새 라우트 파일 다섯의 `export const maxDuration` 은 한 건도 잡히지 않았다(원장에서 그 오탐은 12/17 런에 올라 있었다) | 열림 · `resolution: deferred` |
+| D-3 | gap 4개가 전부 런 내용과 무관한 상수다 — `stage_absent:e2e` · `stage_na:docs` · `instruction_slot_over_budget` (+ `instruction_changed`) | 열림 |
+| D-7 | 07 이 빈손 — `external.status: "disabled"` · `code_review: "skipped"`(`skip_reason: "clean_05"`). 그런데 보고서 note 는 없는 키(`config.external_review.bot_logins`)를 근거로 댔다. 실제 키는 `external_pr_review` | 열림 |
+| D-9 | `sec` 이 매칭되지 않아 `arch` 가 `planned` 에 들어온 유일한 런. arch 수확은 **minor 4 · major 0** — 상한 4→5 의 근거로 삼기엔 약하다 | 관측 |
 
 ### 이 런이 승격 판단에 주는 답
 
-승격된 규칙 없음 — ROADMAP §6 표는 움직이지 않았다.
+승격된 규칙 없음 — ROADMAP §6 의 원장·임계 줄은 움직이지 않았다.
+**움직인 것**: §7-7 `risk_undeclared` 표본이 0 → 1 (`declared: []` 인데 `data` 가 켜졌고,
+그 data 가 실제 지적 2건을 냈다). 같은 §7-7 의 「`arch` 가 얼마나 자주 dropped 되나」에는
+**반례**를 준다 — 이 런은 `sec` 미매칭이라 arch 가 돌았고 수확은 minor 4 · major 0 이었다.
 
 ### 다음 런에서 볼 것
 
 런 보고서 `docs\harness\pipeline\runs\20260919-2342-9258.md` 의 「다음 런에서 바꿀 것」.
 
-## 파이프라인 런 P2 — `should-fr024-sheet-webhook` (2026-09-20)
+## 파이프라인 런 P3 — `should-fr024-sheet-webhook` (2026-09-20)
 
 | 항목 | 값 |
 |------|-----|
@@ -199,7 +215,7 @@
 | 런 ID | `_workspace/runs/20260919-2343-d42d` |
 | 브랜치 | `feat-fr024-sheet-webhook` |
 | 대상 | 런 보고서 `docs\harness\pipeline\runs\20260919-2343-d42d.md` 의 계약 절을 본다 (계약은 06 에서 지워진다) |
-| 어댑터 | `nextjs-ts` (`verified: true`) |
+| 어댑터 | `nextjs-ts` (`verified: false`) — **런 당시 표기는 `true` 였고 그것이 틀렸다.** [ADR-H069](DECISIONS.md) 가 근거 없이 올라간 값을 되돌렸다(귀속 규칙 4종이 19런 동안 판정 0/4). 어댑터 파일의 현재 값도 `false` 다 |
 | 결과 | PASS_WITH_GAPS · gaps 4 (triage_miss:01:max_rounds=2, stage_absent:e2e, stage_na:docs, instruction_slot_over_budget) |
 | 머신 | 미측정 |
 
@@ -219,7 +235,9 @@
 
 ### 이 런이 확인하기로 했던 것 — 그리고 결과
 
-미측정 — 런 전에 적은 예측이 상태에 없다. 런 보고서 `docs\harness\pipeline\runs\20260919-2343-d42d.md` 의 서술을 본다.
+**런별** 예측은 상태에 없다 — 런 보고서 `docs\harness\pipeline\runs\20260919-2343-d42d.md` 의 서술을 본다.
+
+**런 전 예측은 있다.** 위 P1 절(예측 초안 2026-09-19)의 9개 예측이 이 런을 포함한 4런으로 채점됐다. 이 런이 그 표의 어느 칸을 움직였는지는 P1 의 「결과」 열과 아래 「4런 교차 분석」에 있다.
 
 ### 막힌 지점 · 수동 개입
 
@@ -229,11 +247,17 @@
 
 | ID | 무엇 | 상태 |
 |---|---|---|
-| — | 미측정 — 사람이 적는다 | |
+| D-5 | 03 제출이 `rules_read` 해시 불일치로 반려됐다 — 8개 규칙 문서를 **제출 시점 디스크**와 대조하는데, 4런이 worktree 에서 동시에 돌고 머지가 `docs/*.md` 를 바꿨다. 검사가 「규칙이 바뀌었다」와 「다른 런이 문서를 건드렸다」를 구분하지 못한다 | 열림 |
+| D-7 | `triage_miss`(`small → normal`, units 4 > `small_max_units` 3) 때문에 07 이 `effort: "medium"` 으로 **강제 실행**됐다 — findings 0, 모델 호출 1회 소모. 오판정의 벌칙이 「빈손일 것이 보장된 페이즈를 한 번 더 부르기」다 | 열림 |
+| D-6 | `precheck` exit 9 가 05·06 **양쪽**에서 났다(파일 12·13). 사람이 05 에서 고른 판단이 어디에도 남지 않아 06 이 같은 것을 다시 물었다 | 열림 |
+| — | 02 가 1차 관측기(`mode: primary`)의 원판정 **critical 2 · major 2 · minor 1** 을 **여섯 전부 minor 로 강등**하고 그중 셋을 코드로 반박해 `reject` 했다(채택 3/6). 02 의 값이 「새 지적」보다 **「과잉 판정 깎기」**에 있다는 첫 실물 사례 | 관측 (결함 아님) |
 
 ### 이 런이 승격 판단에 주는 답
 
-승격된 규칙 없음 — ROADMAP §6 표는 움직이지 않았다.
+승격된 규칙 없음.
+**움직인 것**: §7-5 트리아지 임계값에 **이 리포의 첫 `triage_miss` 표본**(2차 파일럿 0/15 → 여기 1/4).
+`small_max_units` 3 이 units 4 를 놓쳤다. 벌칙이 `01:max_rounds=2` gap 하나로 끝나지 않고
+07 을 `medium` 으로 한 번 더 부르는 데까지 간다는 것도 이 런이 처음 보여줬다.
 
 ### 다음 런에서 볼 것
 
@@ -247,7 +271,7 @@
 | 런 ID | `_workspace/runs/20260919-2343-1c04` |
 | 브랜치 | `feat-should-fr022-fx` |
 | 대상 | 런 보고서 `docs\harness\pipeline\runs\20260919-2343-1c04.md` 의 계약 절을 본다 (계약은 06 에서 지워진다) |
-| 어댑터 | `nextjs-ts` (`verified: true`) |
+| 어댑터 | `nextjs-ts` (`verified: false`) — **런 당시 표기는 `true` 였고 그것이 틀렸다.** [ADR-H069](DECISIONS.md) 가 근거 없이 올라간 값을 되돌렸다(귀속 규칙 4종이 19런 동안 판정 0/4). 어댑터 파일의 현재 값도 `false` 다 |
 | 결과 | PASS_WITH_GAPS · gaps 3 (stage_absent:e2e, stage_na:docs, instruction_slot_over_budget) |
 | 머신 | 미측정 |
 
@@ -267,7 +291,9 @@
 
 ### 이 런이 확인하기로 했던 것 — 그리고 결과
 
-미측정 — 런 전에 적은 예측이 상태에 없다. 런 보고서 `docs\harness\pipeline\runs\20260919-2343-1c04.md` 의 서술을 본다.
+**런별** 예측은 상태에 없다 — 런 보고서 `docs\harness\pipeline\runs\20260919-2343-1c04.md` 의 서술을 본다.
+
+**런 전 예측은 있다.** 위 P1 절(예측 초안 2026-09-19)의 9개 예측이 이 런을 포함한 4런으로 채점됐다. 이 런이 그 표의 어느 칸을 움직였는지는 P1 의 「결과」 열과 아래 「4런 교차 분석」에 있다.
 
 ### 막힌 지점 · 수동 개입
 
@@ -277,11 +303,18 @@
 
 | ID | 무엇 | 상태 |
 |---|---|---|
-| — | 미측정 — 사람이 적는다 | |
+| **D-1** | 에스컬레이션 해소 뒤 3라운드가 **리뷰어 전원 재팬아웃**됐다 — `phases["05-code-review"].round_reviewers = {"1":{planned:4}, "2":{planned:1}, "3":{planned:4}}`. r3 수확은 **minor 9 · major 0 · critical 0**. 산문(`cli.py:3862`)은 「델타 재리뷰는 한 명」을 약속한다 | **열림 · P0 결함** |
+| D-4 | 02 제출이 `check_fail {"errors": 5}` 로 반려됐다. 프롬프트(`02-cross-verify.md:150`)는 `quote` 를 **리뷰어 자신의 raw** 부분문자열로 요구하는데 검사기(`cli.py:2983`)는 **`01_plan.md`** 와 대조한다 | 열림 |
+| D-6 | `precheck` exit 9 가 06 에서 **연속 2회** 사람을 세웠다(seq 52·53 · 55·56) | 열림 |
+| D-9 | `saveManualFx` 의 critical 1건을 `data` · `gen` · `sec` **3인이 각자** 발견했다 — 같은 결함에 opus 3회 | 관측 |
+| D-11 | 에스컬레이션 선택지 셋(계약 결함 의심 · 이대로 진행 · 중단) 밖의 **「기타」**를 사람이 골랐다 | 열림 |
 
 ### 이 런이 승격 판단에 주는 답
 
-승격된 규칙 없음 — ROADMAP §6 표는 움직이지 않았다.
+승격된 규칙 없음.
+**움직인 것**: §6 「`files_max` 는 소스만 센다 — 미실측」에 표본이 생겼다([ADR-H066](DECISIONS.md) 뒤에도 exit 9).
+§7-4 의 남은 항목 「형식 교정 왕복」도 실측 2건(02 · 05 델타)으로 잡혔다.
+그리고 §7 에 **없던 질문**을 하나 연다 — 에스컬레이션 뒤 재리뷰 범위(D-1).
 
 ### 다음 런에서 볼 것
 
@@ -295,7 +328,7 @@
 | 런 ID | `_workspace/runs/20260920-0107-4265` |
 | 브랜치 | `feat-should-fr020-cost-sheets` |
 | 대상 | 런 보고서 `docs\harness\pipeline\runs\20260920-0107-4265.md` 의 계약 절을 본다 (계약은 06 에서 지워진다) |
-| 어댑터 | `nextjs-ts` (`verified: true`) |
+| 어댑터 | `nextjs-ts` (`verified: false`) — **런 당시 표기는 `true` 였고 그것이 틀렸다.** [ADR-H069](DECISIONS.md) 가 근거 없이 올라간 값을 되돌렸다(귀속 규칙 4종이 19런 동안 판정 0/4). 어댑터 파일의 현재 값도 `false` 다 |
 | 결과 | PASS_WITH_GAPS · gaps 3 (stage_absent:e2e, stage_na:docs, instruction_slot_over_budget) |
 | 머신 | 미측정 |
 
@@ -315,7 +348,9 @@
 
 ### 이 런이 확인하기로 했던 것 — 그리고 결과
 
-미측정 — 런 전에 적은 예측이 상태에 없다. 런 보고서 `docs\harness\pipeline\runs\20260920-0107-4265.md` 의 서술을 본다.
+**런별** 예측은 상태에 없다 — 런 보고서 `docs\harness\pipeline\runs\20260920-0107-4265.md` 의 서술을 본다.
+
+**런 전 예측은 있다.** 위 P1 절(예측 초안 2026-09-19)의 9개 예측이 이 런을 포함한 4런으로 채점됐다. 이 런이 그 표의 어느 칸을 움직였는지는 P1 의 「결과」 열과 아래 「4런 교차 분석」에 있다.
 
 ### 막힌 지점 · 수동 개입
 
@@ -325,12 +360,193 @@
 
 | ID | 무엇 | 상태 |
 |---|---|---|
-| — | 미측정 — 사람이 적는다 | |
+| **D-1** | 3라운드 전원 재팬아웃 — `round_reviewers = {"1":{planned:4}, "2":{planned:1}, "3":{planned:4}}`, r3 모델 호출 4회에 수확 **minor 11 · major 0**. `sec` 은 열린 지적이 minor 1건뿐인데 3332줄 변경분을 opus 로 재독했다 | **열림 · P0 결함** |
+| **D-8** | 04 가 AssertionError 를 `ambiguous → primary_role` 로 **impl 에 먼저** 배정했다(`attribution.json` r1). impl 이 스텁에 맞추려 **계약에 없는 특수 분기를 프로덕션에 넣었고 사람이 되돌렸다.** r2 에서 같은 시그니처가 재발해 test 로 넘어가서야 원인이 스텁임이 드러났다 — 게이트 수리 2라운드가 그 대가다 | **열림** — 상세는 `docs/PIPELINE-LOG.md` §5 |
+| D-2 | `out_of_contract` 3건 — `dynamic`(page.tsx) · `Result` · `UpdateCostSheetPayloadItem`. 뒤 둘은 **타입 전용 export** 이고 면제 자체가 없다(탈출구는 계약 `## 데이터 형태` 에 이름을 적는 것뿐). 셋 다 major · deferred | 열림 |
+| D-4 | 02 `check_fail {"errors": 5}` 반려 — P4 와 같은 원인 | 열림 |
+| D-5 | 03 `rules_read` 해시 불일치 반려 — P3 와 같은 원인 | 열림 |
+| D-6 | `precheck` exit 9 가 05·06 양쪽(파일 13·14, 줄 3270·3415) | 열림 |
+| D-11 | 에스컬레이션 답이 **「기타 — 테스트 1건 보강 후 진행」**. 가장 자주 나오는 답이 메뉴에 없다 | 열림 |
+| — | 02 의 findings 5건(critical 1 · major 3 · minor 1)이 **전부 `reject`** 됐다. critical F-1(`nextval` 선발급)은 「사실 오류」로 반박됐다 — 이 런에서 02 는 계약을 한 글자도 바꾸지 못했다 | 관측 (결함 아님) |
 
 ### 이 런이 승격 판단에 주는 답
 
-승격된 규칙 없음 — ROADMAP §6 표는 움직이지 않았다.
+승격된 규칙 없음.
+**움직인 것**: §7-2 `instruction_slot_budget` — 4/4 런이 `used 17 / budget 12` 라
+「첫 검토 런들의 `used/budget` 을 본 뒤에 정한다」의 조건이 충족됐다. **값 12 는 이 프로젝트에
+맞지 않거나, 초과가 등급을 깎지 말아야 한다.** §7-7 `risk_undeclared` 표본은 2 (5런 기준 미달).
+D-8 은 [ADR-H069](DECISIONS.md) 가 연 관측(귀속 규칙 0/4 판정)이 **실제로 해를 끼친** 첫 사례다.
 
 ### 다음 런에서 볼 것
 
 런 보고서 `docs\harness\pipeline\runs\20260920-0107-4265.md` 의 「다음 런에서 바꿀 것」.
+
+
+---
+
+## 4런 교차 분석 (2026-09-20)
+
+**런 절은 런당 하나라 교차 관측을 담을 칸이 없다.** 아래는 P2~P5 를 나란히 놓아야만
+보이는 것들이고, 근거는 전부 `_workspace/runs/*/{events.jsonl, state.json, 05_*.json,
+attribution.json}` 와 `docs/harness/pipeline/ledger/findings.jsonl`(236행 / 17런)이다.
+**추정치는 없다.**
+
+### 총계
+
+| 런 | 기능 | wall | 모델 호출 | 05 호출 | 등급 |
+|---|---|---:|---:|---:|---|
+| P2 `…2342-9258` | FR-025 브랜드기준 화면 | 48.1분 | 11 | 6 | PASS_WITH_GAPS |
+| P3 `…2343-d42d` | FR-024 시트 웹훅 | 39.4분 | 10 | 4 | PASS_WITH_GAPS |
+| P4 `…2343-1c04` | FR-022 환율 | 74.9분 | 16 | 10 | PASS_WITH_GAPS |
+| P5 `…0107-4265` | FR-020 원가표 | 81.6분 | 17 | 11 | PASS_WITH_GAPS |
+| **합** | | **244분** | **54** | **31 (57%)** | 4/4 동일 |
+
+출처: wall 은 `events.jsonl` 의 첫·끝 `ts`, 호출 수는 `state.budget.model_calls.by_phase`.
+
+**페이즈별 wall 비중** (각 런 `events.jsonl` 의 `phase` 구간 합)
+
+| 페이즈 | 4런 합 | 비중 |
+|---|---:|---:|
+| 05-code-review | 58.9분 | 24% |
+| 03-implement | 56.6분 | 23% |
+| 04-gate | 38.2분 | 16% |
+| 06-pr | 29.6분 | 12% |
+| 01-plan | 25.2분 | 10% |
+| 02-cross-verify | 22.0분 | 9% |
+| 07-pr-review | 9.3분 | 4% |
+| 00-triage · 08-report | 4.2분 | 2% |
+
+**사람이 막혀 있던 시간 28.1분 (전체의 11%)** — `waiting_human` · `escalated` 이벤트에서
+다음 이벤트까지의 간격:
+
+| 자리 | 4런 합 |
+|---|---:|
+| 06 승인 대기 | 14.0분 |
+| 06 `precheck_policy` | 8.5분 |
+| 05 에스컬레이션 | 4.8분 |
+| 05 `precheck_policy` | 0.8분 |
+
+> **비용계의 한계를 함께 적는다.** `budget.model_calls.basis` 는 `"instructed"` 이고 상태가
+> blind_spots 를 스스로 말한다 — 「모델이 스스로 낸 호출은 세지 못한다(과소)」.
+> **54 는 지시 횟수이지 실호출이 아니고, 토큰·달러는 어디에도 기록되지 않는다 — 미측정.**
+
+### 관측 1 — 05 가 비용의 57% 인데 수확의 3/4은 버려진다
+
+- 원장 `resolution`: 전체 236행 중 `deferred` **168 (71%)**, 이 4런 93행 중 **70 (75%)**.
+- 이 4런의 카테고리: `TEST_MISSING_FAILURE_PATH` **49/93 (53%)**,
+  단일 `rule_slug` `nothing_locked` **34건 (37%)**.
+- 4런 모두 최종 `05_review.json` 의 `major: 0` — major 는 전부 수리되거나 minor 로 내려간다.
+
+즉 **「테스트가 동작을 잠그지 않는다」가 findings 의 절반인데 대부분 minor 로 남아 버려지고,
+리뷰어는 매 런 그것을 opus 로 다시 찾는다.** 같은 `rule_slug` 가 이 정도로 반복되면
+사람이 읽는 산문이나 리뷰어가 아니라 **기계 검사**로 내려야 한다 —
+P3 의 08 노트가 산문 후보를 거절할 때 쓴 논리와 같다.
+
+### 관측 2 — 에스컬레이션 뒤 재팬아웃이 구조적으로 0수확 (D-1)
+
+| 런 | r1 (4인 제출 합) | r2 (델타 1인) | r3 (에스컬레이션 뒤) |
+|---|---|---|---|
+| P4 | critical 4 · major 6 — critical 넷은 `data`·`gen`·`sec`·`test` 가 **같은 결함**을 각자 낸 것이다 | `test` · **major 1** | **4인 · major 0 · critical 0 · minor 9** |
+| P5 | critical 1 · major 8 | `test` · **major 1** | **4인 · major 0 · critical 0 · minor 11** |
+
+**좁은 재리뷰(r2)는 무는데, 넓은 재확인(r3)은 안 문다.** r3 의 모델 호출 8회가
+54 의 **15%** 이고 blocking 수확은 0 이다. 원인은 정책이 아니라 제어 흐름이다 —
+런 절 P4·P5 의 D-1 행을 본다.
+
+### 관측 3 — 리뷰어별 수확 편차 (D-9)
+
+| 리뷰어 | findings | critical | major | 실행 런 |
+|---|---:|---:|---:|---:|
+| test | 47 | 1 | **15** | 4/4 |
+| data | 20 | 1 | 1 | 4/4 |
+| gen | 19 | 2 | 3 | 4/4 |
+| sec | 7 | 1 (중복) | 0 | 3/4 |
+| arch | 4 | 0 | 0 | **1/4** |
+
+- major 21건 중 **15건(71%)이 `test`** 이고, 그 15건이 전부 `TEST_MISSING_FAILURE_PATH` 다.
+- `sec` 이 낸 유일한 critical 은 `gen`·`data` 와 같은 결함이다(P4 `saveManualFx`).
+- `arch` 는 3런에서 상한 4 에 잘렸고([ADR-H062](DECISIONS.md) 가 의도한 대로), 돈 1런의 수확은 minor 4 뿐이다.
+  **상한을 4→5 로 올릴 근거는 이 4런에 없다** — 구조 지적이 새어 나간 증거가 없기 때문이다.
+
+### 관측 4 — 등급이 4런 내내 같은 값이라 정보량이 0 (D-3)
+
+`state.gaps` 가 4/4 런에서 `stage_absent:e2e` · `stage_na:docs` · `instruction_slot_over_budget`
+셋을 공통으로 갖는다. 06 승인의 `grade_at_grant` 도 4런 모두 `PASS_WITH_GAPS` 다.
+**사람이 승인 버튼 앞에서 보는 값이 런마다 같으면 그것은 판단 근거가 아니다.**
+같은 병을 [ADR-H069](DECISIONS.md) 가 `adapter_unverified` 에 대해 한 번 고쳤다(`NON_DEMOTING_GAPS`).
+
+### 관측 5 — 모델의 실수가 아닌 왕복이 4런에 5회
+
+| 무엇 | 횟수 | 런 |
+|---|---:|---|
+| 02 `format_reject` (`errors: 5`) | 2 | P4 · P5 |
+| 03 `format_reject` (`rules_read` 불일치) | 2 | P3 · P5 |
+| 06 `precheck` 재질문(같은 정책 2회) | 1 | P4 |
+| 05·06 양쪽에서 같은 파일 예산을 물음 | 3런 | P3 · P4 · P5 |
+
+앞 둘은 **검사기와 프롬프트가 다른 것을 말해서**(D-4) 또는 **병렬 런을 상정하지 않아서**(D-5)
+나는 왕복이다. 둘 다 모델의 실수가 아니다.
+
+### 관측 6 — 02 교차검증의 수확이 런마다 극단으로 갈린다
+
+02 는 4런 wall 의 **9%** 를 쓰고 모델 호출 3회 · `format_reject` 2회를 썼다.
+그 대가로 무엇을 받았나 — `02_verdict.json` 의 `adopted` 가 답이다:
+
+| 런 | 02 findings | 채택 | 비고 |
+|---|---|---:|---|
+| P2 | — | — | `skip_reason: "no_risk"` 로 **생략** |
+| P3 | 6 (전부 minor) | **3/6** | 1차 관측기의 critical 2 · major 2 를 전부 minor 로 강등한 뒤의 수치다 |
+| P4 | 5 (major 3 · minor 2) | **4/5** | 낸 것이 계약에 반영됐다 — 02 가 가장 잘 무는 런 |
+| P5 | 5 (critical 1 · major 3 · minor 1) | **0/5** | critical 이 「사실 오류」로 반박됐다 |
+
+세 런 합 16건 중 7건 채택(44%). **그런데 편차가 4/5 와 0/5 로 갈린다.**
+
+**그래도 02 를 줄이자고 말하지 않는다** — P3 에서는 1차 관측기가 낸 critical 둘을 코드로
+반박해 **가짜 경보를 멈춰 세우는 일**을 했고, 그것은 findings 수로 안 잡히는 값이다.
+다만 **P5 처럼 02 자신이 틀린 critical 을 낼 수 있다는 것**은 이 표본이 처음 보여줬다.
+다음 런들의 채택률을 더 본 뒤에 판단한다.
+
+### 이 문서의 D 번호 ↔ 템플릿 백로그 번호
+
+결함은 여기서 발견되고 **템플릿에서 고쳐진다.** 두 문서가 같은 것을 다른 이름으로
+부르지 않게 여기에 대응을 적는다. 상대편은 `harness-template` 의 `docs/harness/DECISIONS.md`
+「미구현 백로그」 파동 5 다.
+
+| 여기 | 템플릿 | 티어 |
+|---|---|---|
+| D-1 에스컬레이션 뒤 전원 재팬아웃 | 20 | **P0 · 결함** |
+| D-2 `out_of_contract` 면제 범위 | 24 | P1 |
+| D-3 상수 gap 셋이 등급을 먹는다 | 22 | P2 · 결정 |
+| D-4 02 `quote` 대조 대상 불일치 | 21 | **P0 · 결함** |
+| D-5 `rules_read` 스냅샷 부재 | 23 | **P0 · 결함** |
+| D-6 precheck 재질문 | 26 | P1 |
+| D-7 07 구조적 빈손 · miss 벌칙 | 25 | P1 |
+| D-8 `ambiguous → primary_role` | 27 | P2 · 결정 |
+| D-9 리뷰어 수확 편차 | 28 | P3 · 표본 |
+| D-10 수확의 3/4이 버려진다 | 29 | P3 · 표본 |
+| D-11 에스컬레이션 메뉴 | 30 | P1 |
+
+### 이 분석이 승격 판단에 주는 답
+
+ROADMAP §6·§7 의 어느 줄이 움직였나 — **안 움직인 줄은 안 움직였다고 적는다.**
+
+| ROADMAP | 움직였나 |
+|---|---|
+| §6 어댑터 `verified` | **안 움직였다.** `false` 가 정직한 값이고 이 4런도 귀속 규칙 판정 0건 |
+| §6 `files_max` 는 소스만 센다 (미실측) | **움직였다** — exit 9 가 3/4런. 테스트를 뺀 뒤에도 문다 |
+| §6 `findings.jsonl` 표본 0 | **움직였다** — 이 리포 원장 236행 / 17런 |
+| §6 승격 자체 게이트 | 안 움직였다 — `applied` 승격 여전히 0건 |
+| §7-2 `instruction_slot_budget` | **움직였다** — 4/4 런 `used 17 / budget 12` |
+| §7-4 형식 교정 왕복 | **움직였다** — 실측 4회 |
+| §7-5 트리아지 임계값 | **움직였다** — `triage_miss` 1/4런 (2차 파일럿 0/15) |
+| §7-7 `risk_undeclared` 게이트 승격 | **부분** — 표본 2/5. 둘 다 해당 리뷰어가 실제 지적을 냈다 |
+| §7-7 `arch` 상한 4→5 | **움직였다 — 반대 방향.** 올릴 근거가 없다 |
+| §7-1 접두부 예산 · §7-3 승격 임계 · §7-6 우회 계측 | 안 움직였다 |
+
+### 다음 런에서 볼 것
+
+1. **D-1 이 고쳐졌으면** `round_reviewers["3"].planned` 가 1 인가.
+2. **D-5 가 고쳐졌으면** 병렬 런에서도 03 `rules_read` 반려가 0 인가.
+3. `files_max` 를 바꾸든 예측을 바꾸든 — **3/4런이 넘는 상한은 상한이 아니다.**
+4. 비용: 세션을 닫은 뒤 `cli.py cost --run-id` 가 worktree 런을 제대로 집어 오는가
+   ([ADR-H068](DECISIONS.md) 뒤 첫 확인). 토큰·달러는 여전히 미측정이다.
