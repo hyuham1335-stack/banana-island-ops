@@ -268,6 +268,17 @@ AdPerformanceInput { channelId, periodStart, periodEnd, spend: string, revenue: 
 
 확정 원가표가 없는 조합은 200 + `data: null`(결과 없음). 환율이 없으면 503.
 
+#### 원가표 (FR-020)
+
+네 라우트 모두 admin 전용 — editor 는 본문·쿼리·경로 파라미터를 보기 전에 403 `FORBIDDEN_ROLE`(`{ required: 'admin' }`). 금액은 발생 통화 그대로 저장하고 원화 환산값은 응답에도 저장에도 없다(ADR-005).
+
+- `GET /api/cost-sheets?productId&distributionRoute` — 둘 다 선택. → 200 `{ data: CostSheet[] }`(항목 포함), id 내림차순(최신 버전 먼저), 항목은 id 오름차순. 0건이면 200 + `[]`. 쿼리 형식 오류 400.
+- `POST /api/cost-sheets` — `CreateCostSheetInput` → 201 `{ data: CostSheet }`(`status: 'draft'`). 없는 제품 404 `{ resource: 'product', id }`. `cloneFromId` 가 있으면 그 원가표의 항목을 모두 복사한 새 draft — 원본이 없으면 404 `{ resource: 'cost_sheet', id }`, 원본이 draft 면 409 `{ from: 'draft', action: 'clone' }`(확정본만 복제), `productId`·`distributionRoute` 가 원본과 다르면 400.
+- `PATCH /api/cost-sheets/{id}` — `UpdateCostSheetInput` → 200 `{ data: CostSheet }`. 항목은 요청 `items` 로 **전체 교체**. 없으면 404, 확정본이면 409 `{ from: 'confirmed', action: 'update' }` 이고 아무것도 바뀌지 않는다(동시 확정과 겹쳐도).
+- `POST /api/cost-sheets/{id}/confirm` — 본문 없음 → 200 `{ data: CostSheet }`(`status: 'confirmed'`, `confirmedAt` 기록). 없으면 404, 이미 확정이면 409 `{ from: 'confirmed', action: 'confirm' }`(`confirmedAt` 은 그대로).
+- 경로 `{id}` 가 양의 정수가 아니면 400.
+- `CostItem` 검증: `stage ∈ {ph, kr, us}` · `costKind` 1~100자 · `amount` 는 0 이상 십진 문자열(정수부 ≤10자리, 소수 ≤4자리) · `currency ∈ {KRW, PHP, USD}`(환율이 두 통화만 있다) · `basis ∈ {per_unit, per_batch}` · `per_batch` 면 `batchQty` 정수 ≥1 필수, `per_unit` 이면 `batchQty: null`. `items` 0~100개. `name` 1~100자.
+
 ## 에러 응답 규약
 
 닫힌 집합이다. 여기 없는 코드를 코드에 만들지 않는다. **실패와 결과 없음에 다른 코드를 준다** — 결과 없음은 코드가 없다(200).

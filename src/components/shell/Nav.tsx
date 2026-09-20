@@ -17,9 +17,14 @@ const NAV_ITEMS = [
 
 const INBOX_NAV_ITEM = { href: "/contents?status=in_review", label: "검수함", hint: "대표 승인 대기" } as const;
 
+// FR-020 원가표 — admin 전용(계약 run 20260920-0107-4265). 인가는 서버(/api/cost-sheets*
+// · loadCostSheetPage)가 하고, 이 숨김은 편의일 뿐이다.
+const COST_SHEET_NAV_ITEM = { href: "/costsheet", label: "원가표", hint: "제품×경로 원가 · 확정" } as const;
+
 export function Nav({ role }: { role: Actor["role"] }) {
   const pathname = usePathname();
-  const items = role === "admin" ? [...NAV_ITEMS, INBOX_NAV_ITEM] : NAV_ITEMS;
+  const items =
+    role === "admin" ? [...NAV_ITEMS, INBOX_NAV_ITEM, COST_SHEET_NAV_ITEM] : NAV_ITEMS;
 
   return (
     <nav className="nav">
