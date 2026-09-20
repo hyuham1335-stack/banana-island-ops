@@ -44,7 +44,12 @@ GAP_REASONS = {
                  "`not_applicable` 로 사유를 선언했다. 표시이고 등급은 "
                  "내리지 않는다 (ADR-H047 추기)"),
     "stage_not_touched": "그 스테이지가 볼 변경이 없었다",
-    "adapter_unverified": "어댑터가 `verified: false` 다 — 실물로 완주한 적이 없다",
+    "adapter_unverified": ("어댑터의 귀속 규칙이 실물 실패에서 판정을 낸 적이 "
+                           "없다 — 아직 안 겪어봤다는 표시이지 이번 런의 결함이 "
+                           "아니다. 등급은 내리지 않는다 (ADR-H069)"),
+    "attribution_unparsed": ("스테이지가 실패했는데 귀속이 실패 항목을 하나도 "
+                             "못 읽었다 — 어댑터의 파싱 규칙이 실물 출력에 "
+                             "안 맞는다 (ADR-H069)"),
     "cross_verify_unavailable": "교차검증 primary·fallback 이 둘 다 불가였다",
     "cross_verify:fallback": ("01 의 교차검증이 폴백으로 돈 회차가 있다 — "
                               "독립 관측 둘이라는 전제가 그만큼 약해졌다"),
@@ -105,9 +110,12 @@ GAP_REASONS = {
 # `demote` 는 등급을 건드리지 않는다 — "관측 결손" 이 아니라 "사람이 할 일이
 # 밀렸다" 는 표시다 (ADR-H047 결정 2). 부르는 쪽(`cli.run_precheck`)이 이
 # 목록으로 가른다.
+# `adapter_unverified` 는 ADR-H069 에서 들어왔다. 이 gap 이 매 런 등급을 깎는
+# 압력 때문에 ADR-H047 결정 3 이 승격 기준을 "완주 런 3개" 로 낮췄다 — 완주는
+# 실패 경로의 근거가 아니다. 기준은 증거 기반으로 올리고 이 표시는 여기로 내린다.
 NON_DEMOTING_GAPS = ("calibration_stale", "instruction_review_manual",
                      "instruction_slot_over_budget", "instruction_slot_unmeasured",
-                     "instruction_changed")
+                     "instruction_changed", "adapter_unverified")
 
 
 def is_non_demoting(gap):
@@ -744,10 +752,19 @@ def build(state, data, calibration, promotions, timing=None, cost=None):
         notes.append("**어댑터가 `verified: false` 다** — 실패 경로가 실물에서 "
                      "돈 적이 없다. 이 런의 초록불은 그만큼만 말한다.")
         ready = data.get("adapter_verify") or {}
-        if ready.get("qualified", 0) >= ready.get("min_runs", 1) > 0:
-            notes.append("**기준 충족** — 전 페이즈 passed 완주 런 %d / 기준 %d. "
+        missing = ready.get("rules_missing") or []
+        if missing:
+            # 완주 수만 보고 "명령 한 번만 치면 된다" 고 적으면 거짓말이다 —
+            # 그 상태로 치면 exit 3 이다 (ADR-H069).
+            notes.append("**귀속 규칙이 아직 판정을 낸 적 없다** — %s. "
+                         "이 규칙이 실물 실패에서 한 번 돌면 `verify-adapter` 가 "
+                         "근거와 함께 올린다." % ", ".join("`%s`" % m for m in missing))
+        elif ready.get("qualified", 0) >= ready.get("min_runs", 1) > 0:
+            notes.append("**기준 충족** — 전 페이즈 passed 완주 런 %d / 기준 %d 이고 "
+                         "귀속 규칙이 전부 실물에서 판정을 냈다. "
                          "`python scripts/harness.py verify-adapter` 로 올린다 "
-                         "(ADR-H047 결정 3)." % (ready["qualified"], ready["min_runs"]))
+                         "(ADR-H047 결정 3 · ADR-H069)." % (ready["qualified"],
+                                                           ready["min_runs"]))
     if "calibration_stale" in gaps:
         notes.append("**측정 뒤 완주 런이 기준 이상 쌓였다** (`calibration_stale`) — "
                      "다음 런 전에 `python scripts/harness.py calibrate` 로 다시 "
